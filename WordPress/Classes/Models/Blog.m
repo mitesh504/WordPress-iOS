@@ -428,6 +428,7 @@ NSString * const PostFormatStandard = @"standard";
         case BlogFeaturePushNotifications:
             return [self supportsPushNotifications];
         case BlogFeatureThemeBrowsing:
+        case BlogFeatureDeletable:
             return [self isHostedAtWPcom] && [self isAdmin];
     }
 }
