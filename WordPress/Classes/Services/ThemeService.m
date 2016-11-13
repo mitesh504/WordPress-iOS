@@ -17,18 +17,11 @@ const NSInteger ThemeOrderTrailing = 9999;
 
 #pragma mark - Themes availability
 
-- (BOOL)accountSupportsThemeServices:(WPAccount *)account
-{
-    NSParameterAssert([account isKindOfClass:[WPAccount class]]);
-    
-    return [account isWPComAccount];
-}
-
 - (BOOL)blogSupportsThemeServices:(Blog *)blog
 {
     NSParameterAssert([blog isKindOfClass:[Blog class]]);
     
-    return blog.restApi && [blog dotComID];
+    return [blog supports:BlogFeatureWPComRESTAPI];
 }
 
 #pragma mark - Local queries: Creating themes
@@ -137,7 +130,7 @@ const NSInteger ThemeOrderTrailing = 9999;
 
 #pragma mark - Remote queries: Getting theme info
 
-- (NSOperation *)getActiveThemeForBlog:(Blog *)blog
+- (NSProgress *)getActiveThemeForBlog:(Blog *)blog
                                success:(ThemeServiceThemeRequestSuccessBlock)success
                                failure:(ThemeServiceFailureBlock)failure
 {
@@ -145,9 +138,13 @@ const NSInteger ThemeOrderTrailing = 9999;
     NSAssert([self blogSupportsThemeServices:blog],
              @"Do not call this method on unsupported blogs, check with blogSupportsThemeServices first.");
     
-    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithApi:blog.restApi];
+    if (blog.wordPressComRestApi == nil) {
+        return nil;
+    }
+
+    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithWordPressComRestApi:blog.wordPressComRestApi];
     
-    NSOperation *operation = [remote getActiveThemeForBlogId:[blog dotComID]
+    NSProgress *progress = [remote getActiveThemeForBlogId:[blog dotComID]
                                                      success:^(RemoteTheme *remoteTheme) {
                                                          Theme *theme = [self themeFromRemoteTheme:remoteTheme
                                                                          forBlog:blog];
@@ -159,10 +156,10 @@ const NSInteger ThemeOrderTrailing = 9999;
                                                          }];
                                                      } failure:failure];
     
-    return operation;
+    return progress;
 }
 
-- (NSOperation *)getPurchasedThemesForBlog:(Blog *)blog
+- (NSProgress *)getPurchasedThemesForBlog:(Blog *)blog
                                    success:(ThemeServiceThemesRequestSuccessBlock)success
                                    failure:(ThemeServiceFailureBlock)failure
 {
@@ -170,9 +167,13 @@ const NSInteger ThemeOrderTrailing = 9999;
     NSAssert([self blogSupportsThemeServices:blog],
              @"Do not call this method on unsupported blogs, check with blogSupportsThemeServices first.");
     
-    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithApi:blog.restApi];
+    if (blog.wordPressComRestApi == nil) {
+        return nil;
+    }
+
+    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithWordPressComRestApi:blog.wordPressComRestApi];
     
-    NSOperation *operation = [remote getPurchasedThemesForBlogId:[blog dotComID]
+    NSProgress *progress = [remote getPurchasedThemesForBlogId:[blog dotComID]
                                                          success:^(NSArray *remoteThemes) {
                                                              NSArray *themes = [self themesFromRemoteThemes:remoteThemes
                                                                                                     forBlog:blog];
@@ -184,21 +185,24 @@ const NSInteger ThemeOrderTrailing = 9999;
                                                              }];
                                                          } failure:failure];
     
-    return operation;
+    return progress;
 }
 
-- (NSOperation *)getThemeId:(NSString*)themeId
+- (NSProgress *)getThemeId:(NSString*)themeId
                  forAccount:(WPAccount *)account
                     success:(ThemeServiceThemeRequestSuccessBlock)success
                     failure:(ThemeServiceFailureBlock)failure
 {
     NSParameterAssert([themeId isKindOfClass:[NSString class]]);
-    NSAssert([self accountSupportsThemeServices:account],
-             @"Do not call this method on unsupported accounts, check with blogSupportsThemeServices first.");
+    NSParameterAssert(account.wordPressComRestApi != nil);
+
+    if (account.wordPressComRestApi == nil) {
+        return nil;
+    }
+
+    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithWordPressComRestApi:account.wordPressComRestApi];
     
-    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithApi:account.restApi];
-    
-    NSOperation *operation = [remote getThemeId:themeId
+    NSProgress *progress = [remote getThemeId:themeId
                                         success:^(RemoteTheme *remoteTheme) {
                                             Theme *theme = [self themeFromRemoteTheme:remoteTheme
                                                                               forBlog:nil];
@@ -210,21 +214,23 @@ const NSInteger ThemeOrderTrailing = 9999;
                                             }];
                                         } failure:failure];
     
-    return operation;
+    return progress;
 }
 
-- (NSOperation *)getThemesForAccount:(WPAccount *)account
+- (NSProgress *)getThemesForAccount:(WPAccount *)account
                                 page:(NSInteger)page
                              success:(ThemeServiceThemesRequestSuccessBlock)success
                              failure:(ThemeServiceFailureBlock)failure
 {
     NSParameterAssert([account isKindOfClass:[WPAccount class]]);
-    NSAssert([self accountSupportsThemeServices:account],
-             @"Do not call this method on unsupported accounts, check with blogSupportsThemeServices first.");
+
+    if (account.wordPressComRestApi == nil) {
+        return nil;
+    }
+
+    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithWordPressComRestApi:account.wordPressComRestApi];
     
-    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithApi:account.restApi];
-    
-    NSOperation *operation = [remote getThemesPage:page
+    NSProgress *progress = [remote getThemesPage:page
                                            success:^(NSArray<RemoteTheme *> *remoteThemes, BOOL hasMore) {
                                                 NSArray *themes = [self themesFromRemoteThemes:remoteThemes
                                                                                        forBlog:nil];
@@ -236,10 +242,10 @@ const NSInteger ThemeOrderTrailing = 9999;
                                                 }];
                                             } failure:failure];
     
-    return operation;
+    return progress;
 }
 
-- (NSOperation *)getThemesForBlog:(Blog *)blog
+- (NSProgress *)getThemesForBlog:(Blog *)blog
                              page:(NSInteger)page
                              sync:(BOOL)sync
                           success:(ThemeServiceThemesRequestSuccessBlock)success
@@ -249,10 +255,14 @@ const NSInteger ThemeOrderTrailing = 9999;
     NSAssert([self blogSupportsThemeServices:blog],
              @"Do not call this method on unsupported blogs, check with blogSupportsThemeServices first.");
     
-    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithApi:blog.restApi];
+    if (blog.wordPressComRestApi == nil) {
+        return nil;
+    }
+
+    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithWordPressComRestApi:blog.wordPressComRestApi];
     NSMutableSet *unsyncedThemes = sync ? [NSMutableSet setWithSet:blog.themes] : nil;
     
-    NSOperation *operation = [remote getThemesForBlogId:[blog dotComID]
+    NSProgress *progress = [remote getThemesForBlogId:[blog dotComID]
                                                    page:page
                                                 success:^(NSArray<RemoteTheme *> *remoteThemes, BOOL hasMore) {
                                                     NSArray *themes = [self themesFromRemoteThemes:remoteThemes
@@ -273,12 +283,12 @@ const NSInteger ThemeOrderTrailing = 9999;
                                                     }];
                                                 } failure:failure];
     
-    return operation;
+    return progress;
 }
 
 #pragma mark - Remote queries: Activating themes
 
-- (NSOperation *)activateTheme:(Theme *)theme
+- (NSProgress *)activateTheme:(Theme *)theme
                        forBlog:(Blog *)blog
                        success:(ThemeServiceThemeRequestSuccessBlock)success
                        failure:(ThemeServiceFailureBlock)failure
@@ -289,9 +299,13 @@ const NSInteger ThemeOrderTrailing = 9999;
     NSAssert([self blogSupportsThemeServices:blog],
              @"Do not call this method on unsupported blogs, check with blogSupportsThemeServices first.");
     
-    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithApi:blog.restApi];
+    if (blog.wordPressComRestApi == nil) {
+        return nil;
+    }
+
+    ThemeServiceRemote *remote = [[ThemeServiceRemote alloc] initWithWordPressComRestApi:blog.wordPressComRestApi];
     
-    NSOperation *operation = [remote activateThemeId:theme.themeId
+    NSProgress *progress = [remote activateThemeId:theme.themeId
                                            forBlogId:[blog dotComID]
                                              success:^(RemoteTheme *remoteTheme) {
                                                  Theme *theme = [self themeFromRemoteTheme:remoteTheme
@@ -304,7 +318,7 @@ const NSInteger ThemeOrderTrailing = 9999;
                                                  }];
                                              } failure:failure];
     
-    return operation;
+    return progress;
 }
 
 #pragma mark - Parsing the dictionary replies

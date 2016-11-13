@@ -1,14 +1,14 @@
 #import "WPError.h"
 #import "WordPressAppDelegate.h"
-#import "WordPressComApi.h"
-#import "LoginViewController.h"
 #import "WPAccount.h"
 #import "NSString+XMLExtensions.h"
 #import "NSString+Helpers.h"
 #import "SupportViewController.h"
 #import "WordPress-Swift.h"
+#import <WPXMLRPC/WPXMLRPC.h>
 
 NSInteger const SupportButtonIndex = 0;
+NSString *const WordPressAppErrorDomain = @"org.wordpress.iphone";
 
 @interface WPError ()
 
@@ -38,7 +38,9 @@ NSInteger const SupportButtonIndex = 0;
     NSString *message = nil;
     NSString *customTitle = nil;
 
-    if ([error.domain isEqual:AFURLRequestSerializationErrorDomain] || [error.domain isEqual:AFURLResponseSerializationErrorDomain]) {
+    if ([error.domain isEqual:AFURLRequestSerializationErrorDomain] ||
+        [error.domain isEqual:AFURLResponseSerializationErrorDomain])
+    {
         NSHTTPURLResponse *response = (NSHTTPURLResponse *)[error.userInfo objectForKey:AFNetworkingOperationFailingURLResponseErrorKey];
         switch (error.code) {
             case NSURLErrorBadServerResponse:
@@ -81,10 +83,11 @@ NSInteger const SupportButtonIndex = 0;
             default:
                 break;
         }
-    } else if ([error.domain isEqualToString:WordPressComApiErrorDomain]) {
-        DDLogError(@"wp.com API error: %@: %@", [error.userInfo objectForKey:WordPressComApiErrorCodeKey], [error localizedDescription]);
-        if (error.code == WordPressComApiErrorInvalidToken || error.code == WordPressComApiErrorAuthorizationRequired) {
-            [LoginViewController presentModalReauthScreen];
+    } else if ([error.domain isEqualToString:WordPressComRestApiErrorDomain]) {
+        DDLogError(@"wp.com API error: %@: %@", error.userInfo[WordPressComRestApi.ErrorKeyErrorCode],
+                   [error localizedDescription]);
+        if (error.code == WordPressComRestApiErrorInvalidToken || error.code == WordPressComRestApiErrorAuthorizationRequired) {
+            [SigninHelpers showSigninForWPComFixingAuthToken];
             return;
         }
     }
@@ -109,8 +112,7 @@ NSInteger const SupportButtonIndex = 0;
 {
     NSString *cleanedErrorMsg = [error localizedDescription];
 
-    //org.wordpress.iphone --> XML-RPC errors
-    if ([error.domain isEqualToString:@"org.wordpress.iphone"] && error.code == 401){
+    if ([error.domain isEqualToString:WPXMLRPCFaultErrorDomain] && error.code == 401){
         cleanedErrorMsg = NSLocalizedString(@"Sorry, you cannot access this feature. Please check your User Role on this site.", @"");
     }
 

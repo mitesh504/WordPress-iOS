@@ -3,7 +3,6 @@
 #import "NSDictionary+SafeExpectations.h"
 #import "NSString+XMLExtensions.h"
 #import "WPTableViewCell.h"
-#import "WPTableViewSectionHeaderFooterView.h"
 
 NSString * const SettingsSelectionTitleKey = @"Title";
 NSString * const SettingsSelectionTitlesKey = @"Titles";
@@ -12,9 +11,7 @@ NSString * const SettingsSelectionHintsKey = @"Hints";
 NSString * const SettingsSelectionDefaultValueKey = @"DefaultValue";
 NSString * const SettingsSelectionCurrentValueKey = @"CurrentValue";
 
-@interface SettingsSelectionViewController ()
-@property (nonatomic, strong) WPTableViewSectionHeaderFooterView *hintView;
-@end
+CGFloat const SettingsSelectionDefaultTableViewCellHeight = 44.0f;
 
 @implementation SettingsSelectionViewController
 
@@ -59,8 +56,18 @@ NSString * const SettingsSelectionCurrentValueKey = @"CurrentValue";
 
     [self configureCancelButton];
 
-    [WPStyleGuide resetReadableMarginsForTableView:self.tableView];
     [WPStyleGuide configureColorsForView:self.view andTableView:self.tableView];
+}
+
+- (CGSize)preferredContentSize
+{
+    CGSize size = [super preferredContentSize];
+
+    if (self.tableView.style == UITableViewStylePlain) {
+        size.height = [self.titles count] * SettingsSelectionDefaultTableViewCellHeight;
+    }
+
+    return size;
 }
 
 - (void)configureCancelButton
@@ -80,22 +87,6 @@ NSString * const SettingsSelectionCurrentValueKey = @"CurrentValue";
     if (self.onCancel) {
         self.onCancel();
     }
-}
-
-- (UIView *)hintView
-{
-    if (!self.hints) {
-        return nil;
-    }
-    
-    if (!_hintView) {
-        _hintView = [[WPTableViewSectionHeaderFooterView alloc] initWithReuseIdentifier:nil style:WPTableViewSectionStyleFooter];
-    }
-    
-    NSUInteger position = [self.values indexOfObject:self.currentValue];
-    _hintView.title = (position != NSNotFound) ? self.hints[position] : [NSString string];
-
-    return _hintView;
 }
 
 #pragma mark - Table view data source
@@ -144,9 +135,15 @@ NSString * const SettingsSelectionCurrentValueKey = @"CurrentValue";
     }
 }
 
-- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    return self.hintView;
+    NSUInteger position = [self.values indexOfObject:self.currentValue];
+    return (position != NSNotFound) ? self.hints[position] : nil;
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayFooterView:(UIView *)view forSection:(NSInteger)section
+{
+    [WPStyleGuide configureTableViewSectionFooter:view];
 }
 
 - (void)dismiss

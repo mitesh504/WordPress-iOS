@@ -1,6 +1,5 @@
 #import "JetpackSettingsViewController.h"
 #import "Blog.h"
-#import "WordPressComApi.h"
 #import "WPWebViewController.h"
 #import "WPAccount.h"
 #import "WPNUXUtility.h"
@@ -9,7 +8,7 @@
 #import "WPNUXSecondaryButton.h"
 #import "UILabel+SuggestSize.h"
 #import "NSAttributedString+Util.h"
-#import "WordPressComOAuthClient.h"
+#import "WordPress-Swift.h"
 #import "AccountService.h"
 #import "BlogService.h"
 #import "JetpackService.h"
@@ -22,7 +21,7 @@
 #pragma mark ====================================================================================
 
 static NSString *JetpackInstallRelativePath                 = @"plugin-install.php?tab=plugin-information&plugin=jetpack";
-static NSString *JetpackMoreInformationURL                  = @"https://apps.wordpress.org/support/#faq-ios-15";
+static NSString *JetpackMoreInformationURL                  = @"https://apps.wordpress.com/support/#faq-ios-15";
 
 static CGFloat const JetpackiOS7StatusBarOffset             = 20.0;
 static CGFloat const JetpackStandardOffset                  = 16;
@@ -75,7 +74,7 @@ static NSInteger const JetpackVerificationCodeNumberOfLines = 2;
 
 - (instancetype)initWithBlog:(Blog *)blog
 {
-    self = [super init];
+    self = [self init];
     if (self) {
         _blog = blog;
         _showFullScreen = YES;
@@ -95,6 +94,8 @@ static NSInteger const JetpackVerificationCodeNumberOfLines = 2;
 
 - (void)willAnimateRotationToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
 {
+    [super willAnimateRotationToInterfaceOrientation:toInterfaceOrientation duration:duration];
+    
     [self layoutControls];
 }
 
@@ -104,9 +105,23 @@ static NSInteger const JetpackVerificationCodeNumberOfLines = 2;
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
+
     [self.navigationController setNavigationBarHidden:self.showFullScreen animated:animated];
+}
+
+- (void)viewDidLayoutSubviews
+{
+    [super viewDidLayoutSubviews];
+
     [self reloadInterface];
     [self updateForm];
+}
+
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+
     [self checkForJetpack];
 }
 
@@ -128,13 +143,6 @@ static NSInteger const JetpackVerificationCodeNumberOfLines = 2;
     [self addControls];
     [self addGesturesRecognizer];
     [self addSkipButtonIfNeeded];
-}
-
-// This resolves a crash due to JetpackSettingsViewController previously using a .xib.
-// Source: http://stackoverflow.com/questions/17708292/not-key-value-coding-compliant-error-from-deleted-xib
-- (void)loadView
-{
-    [super loadView];
 }
 
 - (void)addControls
@@ -448,11 +456,15 @@ static NSInteger const JetpackVerificationCodeNumberOfLines = 2;
     [self setAuthenticating:YES];
 
     void (^finishedBlock)() = ^() {
-        [self setAuthenticating:NO];
-        
-        if (self.completionBlock) {
-            self.completionBlock(YES);
-        }
+        // Ensure options are up to date after connecting Jetpack as there may
+        // now be new info.
+        BlogService *service = [[BlogService alloc] initWithManagedObjectContext:[[ContextManager sharedInstance] mainContext]];
+        [service syncBlog:self.blog completionHandler:^() {
+            [self setAuthenticating:NO];
+            if (self.completionBlock) {
+                self.completionBlock(YES);
+            }
+        }];
     };
 
     void (^failureBlock)(NSError *error) = ^(NSError *error) {

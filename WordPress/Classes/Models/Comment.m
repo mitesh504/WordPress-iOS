@@ -5,12 +5,13 @@
 #import "NSString+XMLExtensions.h"
 #import "NSString+HTML.h"
 #import "NSString+Helpers.h"
+#import "WordPress-Swift.h"
 
 NSString * const CommentUploadFailedNotification = @"CommentUploadFailed";
 
 NSString * const CommentStatusPending = @"hold";
 NSString * const CommentStatusApproved = @"approve";
-NSString * const CommentStatusDisapproved = @"trash";
+NSString * const CommentStatusUnapproved = @"trash";
 NSString * const CommentStatusSpam = @"spam";
 
 // draft is used for comments that have been composed but not succesfully uploaded yet
@@ -45,9 +46,9 @@ NSString * const CommentStatusDraft = @"draft";
 
 + (NSString *)titleForStatus:(NSString *)status
 {
-    if ([status isEqualToString:@"hold"]) {
+    if ([status isEqualToString:CommentStatusPending]) {
         return NSLocalizedString(@"Pending moderation", @"");
-    } else if ([status isEqualToString:@"approve"]) {
+    } else if ([status isEqualToString:CommentStatusApproved]) {
         return NSLocalizedString(@"Comments", @"");
     }
 
@@ -99,7 +100,7 @@ NSString * const CommentStatusDraft = @"draft";
 }
 
 
-#pragma mark - WPContentViewProvider protocol
+#pragma mark - PostContentProvider protocol
 
 - (BOOL)isPrivateContent
 {
@@ -138,8 +139,14 @@ NSString * const CommentStatusDraft = @"draft";
     return self.author_url.hostname;
 }
 
-- (BOOL)hasAuthorUrl {
+- (BOOL)hasAuthorUrl
+{
     return self.author_url && ![self.author_url isEqualToString:@""];
+}
+
+- (BOOL)isApproved
+{
+    return [self.status isEqualToString:CommentStatusApproved];
 }
 
 - (NSString *)contentForDisplay

@@ -1,9 +1,9 @@
 import UIKit
 
 class BlogToBlog32to33: NSEntityMigrationPolicy {
-    
+
     override func createDestinationInstancesForSourceInstance(sInstance: NSManagedObject, entityMapping mapping: NSEntityMapping, manager: NSMigrationManager) throws {
-        DDLogSwift.logInfo("\(self.dynamicType) \(__FUNCTION__) (\(mapping.sourceEntityName) -> \(mapping.destinationEntityName))")
+        DDLogSwift.logInfo("\(self.dynamicType) \(#function) \(mapping.sourceEntityName) -> \(mapping.destinationEntityName))")
 
         let isWPcom = sInstance.valueForKeyPath("account.isWpcom") as? Bool ?? false
         let isJetpack = sInstance.valueForKey("isJetpack") as? Bool ?? false
@@ -19,7 +19,7 @@ class BlogToBlog32to33: NSEntityMigrationPolicy {
             "icon", "isActivated", "isAdmin", "isMultiAuthor", "lastCommentsSync",
             "lastPagesSync", "lastPostsSync", "lastStatsSync", "lastUpdateWarning",
             "options", "postFormats", "url", "visible", "xmlrpc",
-        ];
+        ]
         destBlog.setValuesForKeysWithDictionary(sInstance.dictionaryWithValuesForKeys(keysToMigrate))
 
         // 3. Set the username to the account username, except for Jetpack managed blogs
@@ -41,7 +41,7 @@ class BlogToBlog32to33: NSEntityMigrationPolicy {
                 DDLogSwift.logError("Blog's XML-RPC doesn't match Account's XML-RPC: \(blogXmlrpc) !== \(accountXmlrpc)")
 
                 let username = sInstance.valueForKeyPath("account.username") as! String
-                
+
                 do {
                     let password = try SFHFKeychainUtils.getPasswordForUsername(username, andServiceName: accountXmlrpc)
                     try SFHFKeychainUtils.storeUsername(username, andPassword: password, forServiceName: blogXmlrpc, updateExisting: true)

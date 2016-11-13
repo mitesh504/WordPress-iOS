@@ -2,20 +2,20 @@
 /// different builds.
 @objc
 enum FeatureFlag: Int {
-    /// My Sites > Site > People
-    /// Development on hold while we focus on Me
-    case People
-    /// Me > My Profile
-    /// Needs better UI for loading/failed states
-    case MyProfile
+    case NativeEditor
+    case ExampleFeature
 
     /// Returns a boolean indicating if the feature is enabled
     var enabled: Bool {
         switch self {
-        case .People:
-            return build(.Debug)
-        case .MyProfile:
-            return build(.Debug, .Alpha, .Internal)
+        case .ExampleFeature:
+            return true
+        case .NativeEditor:
+            // At the moment this is only active in debug mode
+            if build(.Alpha, .Debug) {
+                return true
+            }
+            return false
         }
     }
 }

@@ -2,8 +2,8 @@
 #import "AccountService.h"
 #import "BlogService.h"
 #import "ContextManager.h"
-#import "LoginViewController.h"
 #import "WPAccount.h"
+#import "WordPress-Swift.h"
 
 @implementation WPAuthTokenIssueSolver
 
@@ -16,27 +16,22 @@
     BOOL isFixingAuthTokenIssue = NO;
     
     if ([self hasAuthTokenIssues]) {
-        LoginViewController *loginViewController = [[LoginViewController alloc] init];
-        
-        loginViewController.onlyDotComAllowed = YES;
-        loginViewController.shouldReauthenticateDefaultAccount = YES;
-        loginViewController.cancellable = ![self noSelfHostedBlogs];
-        loginViewController.dismissBlock = ^(BOOL cancelled) {
+        UIViewController *controller = [SigninHelpers signinForWPComFixingAuthToken:^(BOOL cancelled) {
             if (cancelled) {
                 [self showCancelReAuthenticationAlertAndOnOK:^{
                     NSManagedObjectContext *mainContext = [[ContextManager sharedInstance] mainContext];
                     AccountService *accountService = [[AccountService alloc] initWithManagedObjectContext:mainContext];
-                    
+
                     [accountService removeDefaultWordPressComAccount];
                     onComplete();
                 }];
             } else {
                 onComplete();
             }
-        };
-        
-        [UIApplication sharedApplication].keyWindow.rootViewController = loginViewController;
-        
+        }];
+
+        [UIApplication sharedApplication].keyWindow.rootViewController = controller;
+
         [self showExplanationAlertForReAuthenticationDueToMissingAuthToken];
         isFixingAuthTokenIssue = YES;
     } else {
@@ -124,7 +119,7 @@
 {
     NSString *alertTitle = NSLocalizedString(@"Oops!",
                                              @"Title for the warning shown to the user when the app realizes there should be an auth token but there isn't one.");
-    NSString *alertMessage = NSLocalizedString(@"There was a problem connecting to WordPress.com. Please sign in again.",
+    NSString *alertMessage = NSLocalizedString(@"There was a problem connecting to WordPress.com. Please log in again.",
                                                @"Message for the warning shown to the user when the app realizes there should be an auth token but there isn't one.");
     NSString *okButtonTitle = NSLocalizedString(@"OK",
                                                 @"OK button title for the warning shown to the user when the app realizes there should be an auth token but there isn't one.");

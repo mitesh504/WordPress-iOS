@@ -1,64 +1,61 @@
 #import "MediaServiceRemoteXMLRPC.h"
 #import "RemoteMedia.h"
-#import <WordPressApi/WPXMLRPCClient.h>
+#import "WordPress-Swift.h"
 
 @implementation MediaServiceRemoteXMLRPC
 
 - (void)getMediaWithID:(NSNumber *)mediaID
-             forBlogID:(NSNumber *)blogID
                success:(void (^)(RemoteMedia *remoteMedia))success
                failure:(void (^)(NSError *error))failure
 {
-    NSArray *parameters = [self getXMLRPCArgsForBlogWithID:blogID extra:mediaID];
+    NSArray *parameters = [self XMLRPCArgumentsWithExtra:mediaID];
     [self.api callMethod:@"wp.getMediaItem"
               parameters:parameters
-                 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                 success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
                      if (success) {
                         NSDictionary * xmlRPCDictionary = (NSDictionary *)responseObject;
                         RemoteMedia * remoteMedia = [self remoteMediaFromXMLRPCDictionary:xmlRPCDictionary];
                         success(remoteMedia);
                      }
-                 } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                 } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
                      if (failure) {
                         failure(error);
                      }
                  }];
 }
 
-- (void)getMediaLibraryForBlogID:(NSNumber *)blogID
-                         success:(void (^)(NSArray *))success
-                         failure:(void (^)(NSError *))failure
+- (void)getMediaLibraryWithSuccess:(void (^)(NSArray *))success
+                           failure:(void (^)(NSError *))failure
 {
-    NSArray *parameters = [self getXMLRPCArgsForBlogWithID:blogID extra:nil];
+    NSArray *parameters = [self defaultXMLRPCArguments];
     [self.api callMethod:@"wp.getMediaLibrary"
               parameters:parameters
-                 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                 success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
                      NSAssert([responseObject isKindOfClass:[NSArray class]], @"Response should be an array.");
                      if (success) {
                          success([self remoteMediaFromXMLRPCArray:responseObject]);
                      }
                  }
-                 failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                 failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
                      if (failure) {
                          failure(error);
                      }
                  }];
 }
 
-- (void)getMediaLibraryCountForBlogID:(NSNumber *)blogID
-                            success:(void (^)(NSInteger))success
-                            failure:(void (^)(NSError *))failure
+- (void)getMediaLibraryCountWithSuccess:(void (^)(NSInteger))success
+                                failure:(void (^)(NSError *))failure
 {
-    NSArray *parameters = [self getXMLRPCArgsForBlogWithID:blogID extra:nil];
+    NSArray *parameters = [self defaultXMLRPCArguments];
     [self.api callMethod:@"wp.getMediaLibrary"
               parameters:parameters
-                 success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                 success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
                      NSAssert([responseObject isKindOfClass:[NSArray class]], @"Response should be an array.");
                      if (success) {
                          success([responseObject count]);
                      }
                  }
-                 failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                 failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
                      if (failure) {
                          failure(error);
                      }
@@ -108,39 +105,29 @@
 }
 
 - (void)createMedia:(RemoteMedia *)media
-          forBlogID:(NSNumber *)blogID
            progress:(NSProgress **)progress
             success:(void (^)(RemoteMedia *remoteMedia))success
             failure:(void (^)(NSError *error))failure
 {
-    NSProgress *localProgress = [NSProgress progressWithTotalUnitCount:2];
-    //The enconding of the request uses a NSData that has a progress
-    [localProgress becomeCurrentWithPendingUnitCount:1];
     NSString *path = media.localURL;
     NSString *type = media.mimeType;
     NSString *filename = media.file;
     
-    NSDictionary *data = @{
+    NSMutableDictionary *data = [NSMutableDictionary dictionaryWithDictionary:@{
                            @"name": filename,
                            @"type": type,
                            @"bits": [NSInputStream inputStreamWithFileAtPath:path],
-                           };
-    NSArray *parameters = [self getXMLRPCArgsForBlogWithID:blogID extra:data];
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
-    NSString *directory = [paths objectAtIndex:0];
-    NSString *guid = [[NSProcessInfo processInfo] globallyUniqueString];
-    NSString *streamingCacheFilePath = [directory stringByAppendingPathComponent:guid];
-    
-    NSMutableURLRequest *request = [self.api streamingRequestWithMethod:@"wp.uploadFile" parameters:parameters usingFilePathForCache:streamingCacheFilePath];
-    
-    [self addBasicAuthCredentialsIfAvailableToRequest:request];
-    
-    [localProgress resignCurrent];
+                           }];
+    if ([media.postID compare:@(0)] == NSOrderedDescending) {
+        data[@"post_id"] = media.postID;
+    }
 
-    AFHTTPRequestOperation *operation = [self.api HTTPRequestOperationWithRequest:request
-      success:^(AFHTTPRequestOperation *operation, id responseObject) {
+    NSArray *parameters = [self XMLRPCArgumentsWithExtra:data];
+
+    __block NSProgress *localProgress = [self.api streamCallMethod:@"wp.uploadFile"
+                                                parameters:parameters
+                                                   success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
           NSDictionary *response = (NSDictionary *)responseObject;
-          [[NSFileManager defaultManager] removeItemAtPath:streamingCacheFilePath error:nil];
           if (![response isKindOfClass:[NSDictionary class]]) {
               localProgress.completedUnitCount=0;
               localProgress.totalUnitCount=0;
@@ -155,33 +142,28 @@
                   success(remoteMedia);
               }
           }
-      } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+      } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
           localProgress.completedUnitCount=0;
-          localProgress.totalUnitCount=0;
-          [[NSFileManager defaultManager] removeItemAtPath:streamingCacheFilePath error:nil];
+          localProgress.totalUnitCount=0;          
           if (failure) {
               failure(error);
           }
       }];
-    
-    // Setup progress object
-    [operation setUploadProgressBlock:^(NSUInteger bytesWritten, long long totalBytesWritten, long long totalBytesExpectedToWrite) {
-        localProgress.completedUnitCount+=bytesWritten;
-    }];
-    unsigned long long size = [[request valueForHTTPHeaderField:@"Content-Length"] longLongValue];
-    // Adding some extra time because after the upload is done the backend takes some time to process the data sent
-    localProgress.totalUnitCount = size+1;
-    localProgress.cancellable = YES;
-    localProgress.pausable = NO;
-    localProgress.cancellationHandler = ^(){
-        [operation cancel];
-    };
+
     
     if (progress) {
         *progress = localProgress;
     }
-    
-    [self.api.operationQueue addOperation:operation];
+}
+
+- (void)updateMedia:(RemoteMedia *)media
+            success:(void (^)(RemoteMedia *remoteMedia))success
+            failure:(void (^)(NSError *error))failure
+{
+    //HACK: Sergio Estevao: 2016-04-06 this option doens't exist on XML-RPC so we will always say that all was good
+    if (success) {
+        success(media);
+    }
 }
 
 #pragma mark - Private methods
@@ -208,6 +190,7 @@
     remoteMedia.descriptionText = [xmlRPC stringForKey:@"description"];
     remoteMedia.extension = [remoteMedia.file pathExtension];
     remoteMedia.length = [xmlRPC numberForKeyPath:@"metadata.length"];
+    remoteMedia.postID = [xmlRPC numberForKeyPath:@"parent"];
     return remoteMedia;
 }
 

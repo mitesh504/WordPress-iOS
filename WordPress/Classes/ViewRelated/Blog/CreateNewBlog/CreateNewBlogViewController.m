@@ -1,10 +1,8 @@
 #import "CreateNewBlogViewController.h"
-#import "WordPressComApi.h"
 #import "WPNUXMainButton.h"
 #import "WPNUXSecondaryButton.h"
 #import "WPWalkthroughTextField.h"
 #import "WPAsyncBlockOperation.h"
-#import "WPComLanguages.h"
 #import "WPWalkthroughOverlayView.h"
 #import "WPNUXUtility.h"
 #import "WPStyleGuide.h"
@@ -19,6 +17,9 @@
 #import "Constants.h"
 
 #import "WordPress-Swift.h"
+
+NSString * const NewWPComBlogCreatedNotification = @"NewWPComBlogCreatedNotification";
+NSString * const NewWPComBlogCreatedNotificationBlogUserInfoKey = @"NewWPComBlogCreatedNotificationBlogUserInfoKey";
 
 @interface CreateNewBlogViewController ()<UITextFieldDelegate,UIGestureRecognizerDelegate> {
     WPNUXSecondaryButton *_cancelButton;
@@ -35,7 +36,7 @@
     BOOL _userDefinedSiteAddress;
     CGFloat _keyboardOffset;
     
-    NSDictionary *_currentLanguage;
+    NSNumber *_currentLanguageId;
 }
 
 @end
@@ -58,7 +59,7 @@ static UIEdgeInsets const CreateBlogCancelButtonPaddingPad  = {1.0, 13.0, 0.0, 0
     self = [super init];
     if (self) {
         _operationQueue = [[NSOperationQueue alloc] init];
-        _currentLanguage = [WPComLanguages currentLanguage];
+        _currentLanguageId = [[WordPressComLanguageDatabase new] deviceLanguageId];
     }
     return self;
 }
@@ -428,7 +429,7 @@ static UIEdgeInsets const CreateBlogCancelButtonPaddingPad  = {1.0, 13.0, 0.0, 0
 
 - (void)displayRemoteError:(NSError *)error
 {
-    NSString *errorMessage = [error.userInfo objectForKey:WordPressComApiErrorMessageKey];
+    NSString *errorMessage = error.userInfo[NSLocalizedDescriptionKey];
     [self showError:errorMessage];
 }
 
@@ -488,14 +489,10 @@ static UIEdgeInsets const CreateBlogCancelButtonPaddingPad  = {1.0, 13.0, 0.0, 0
     
     WPAsyncBlockOperation *blogCreation = [WPAsyncBlockOperation operationWithBlock:^(WPAsyncBlockOperation *operation){
         WordPressComServiceSuccessBlock createBlogSuccess = ^(NSDictionary *responseDictionary){
-            [WPAnalytics track:WPAnalyticsStatCreatedAccount];
+            [WPAnalytics track:WPAnalyticsStatCreatedSite];
             [operation didSucceed];
             
-            NSMutableDictionary *blogOptions = [[responseDictionary dictionaryForKey:@"blog_details"] mutableCopy];
-            if ([blogOptions objectForKey:@"blogname"]) {
-                [blogOptions setObject:[blogOptions objectForKey:@"blogname"] forKey:@"blogName"];
-                [blogOptions removeObjectForKey:@"blogname"];
-            }
+            NSDictionary *blogOptions = [responseDictionary dictionaryForKey:@"blog_details"];
             
             NSManagedObjectContext *context = [[ContextManager sharedInstance] mainContext];
             AccountService *accountService = [[AccountService alloc] initWithManagedObjectContext:context];
@@ -507,19 +504,38 @@ static UIEdgeInsets const CreateBlogCancelButtonPaddingPad  = {1.0, 13.0, 0.0, 0
                 blog = [blogService createBlogWithAccount:defaultAccount];
                 blog.xmlrpc = blogOptions[@"xmlrpc"];
             }
-            blog.blogID = [blogOptions numberForKey:@"blogid"];
+            blog.dotComID = [blogOptions numberForKey:@"blogid"];
             blog.url = blogOptions[@"url"];
-            blog.settings.name = [blogOptions[@"blogname"] stringByDecodingXMLCharacters];
-            defaultAccount.defaultBlog = blog;
-            
+            blog.settings.name = [[blogOptions stringForKey:@"blogname"] stringByDecodingXMLCharacters];
+
             [[ContextManager sharedInstance] saveContext:context];
-            
-            [accountService updateUserDetailsForAccount:defaultAccount success:nil failure:nil];
-            [blogService syncBlog:blog];
-            [WPAnalytics refreshMetadata];
-            [self setAuthenticating:NO];
-            [self dismissViewControllerAnimated:YES completion:nil];
+
+            // syncBlog will need a permanent ID so it can fetch and update the blog in its request completion blocks 
+            [[ContextManager sharedInstance] obtainPermanentIDForObject:blog];
+
+            __weak __typeof(self) weakSelf = self;
+
+            void (^completion)() = ^{
+                [WPAnalytics refreshMetadata];
+                [weakSelf setAuthenticating:NO];
+                [weakSelf dismissViewControllerAnimated:YES completion:^{
+                    NSDictionary *userInfo = @{ NewWPComBlogCreatedNotificationBlogUserInfoKey: blog };
+
+                    [[NSNotificationCenter defaultCenter] postNotificationName:NewWPComBlogCreatedNotification
+                                                                        object:nil
+                                                                      userInfo:userInfo];
+                }];
+            };
+
+            [blogService syncBlog:blog completionHandler:^{
+                [accountService updateUserDetailsForAccount:defaultAccount
+                                                    success:completion
+                                                    failure:^(NSError * _Nonnull error) {
+                                                        completion();
+                                                    }];
+            }];
         };
+
         WordPressComServiceFailureBlock createBlogFailure = ^(NSError *error) {
             DDLogError(@"Failed creating blog: %@", error);
             [self setAuthenticating:NO];
@@ -527,13 +543,13 @@ static UIEdgeInsets const CreateBlogCancelButtonPaddingPad  = {1.0, 13.0, 0.0, 0
             [self displayRemoteError:error];
         };
         
-        NSString *languageId = [_currentLanguage stringForKey:@"lang_id"];
+        NSString *languageId = [_currentLanguageId stringValue];
         
         NSManagedObjectContext *context = [[ContextManager sharedInstance] mainContext];
         AccountService *accountService = [[AccountService alloc] initWithManagedObjectContext:context];
         
-        WordPressComApi *api = [[accountService defaultWordPressComAccount] restApi];
-        WordPressComServiceRemote *service = [[WordPressComServiceRemote alloc] initWithApi:api];
+        WordPressComRestApi *api = [[accountService defaultWordPressComAccount] wordPressComRestApi];
+        WordPressComServiceRemote *service = [[WordPressComServiceRemote alloc] initWithWordPressComRestApi:api];
         
         [service createWPComBlogWithUrl:[self getSiteAddressWithoutWordPressDotCom]
                            andBlogTitle:_siteTitleField.text

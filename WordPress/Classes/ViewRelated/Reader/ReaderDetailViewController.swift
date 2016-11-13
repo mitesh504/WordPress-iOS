@@ -1,12 +1,14 @@
 import Foundation
+import DTCoreText
 import WordPressShared
 import WordPressComAnalytics
 
-// TODO: Share button?  Other feedback
-// TODO: Make sure that changes to analytics in the old VC are applied here
 
-final public class ReaderDetailViewController : UIViewController
+public class ReaderDetailViewController : UIViewController, UIViewControllerRestoration
 {
+
+    static let restorablePostObjectURLhKey: String = "RestorablePostObjectURLKey"
+
     // Structs for Constants
 
     private struct DetailConstants
@@ -65,6 +67,8 @@ final public class ReaderDetailViewController : UIViewController
     private var didBumpPageViews = false
     private var footerViewHeightConstraintConstant = CGFloat(0.0)
 
+    private let sharingController = PostSharingController()
+
     public var post: ReaderPost? {
         didSet {
             oldValue?.removeObserver(self, forKeyPath: DetailConstants.LikeCountKeyPath)
@@ -84,14 +88,15 @@ final public class ReaderDetailViewController : UIViewController
 
     // MARK: - Convenience Factories
 
-    /**
-     Convenience method for instantiating an instance of ReaderListViewController
-     for a particular topic.
 
-     @param topic The reader topic for the list.
-
-     @return A ReaderListViewController instance.
-     */
+    /// Convenience method for instantiating an instance of ReaderDetailViewController
+    /// for a particular topic.
+    ///
+    /// - Parameters:
+    ///     - topic:  The reader topic for the list.
+    ///
+    /// - Return: A ReaderListViewController instance.
+    ///
     public class func controllerWithPost(post:ReaderPost) -> ReaderDetailViewController {
         let storyboard = UIStoryboard(name: "Reader", bundle: NSBundle.mainBundle())
         let controller = storyboard.instantiateViewControllerWithIdentifier("ReaderDetailViewController") as! ReaderDetailViewController
@@ -110,11 +115,50 @@ final public class ReaderDetailViewController : UIViewController
     }
 
 
+    // MARK: - State Restoration
+
+
+    public static func viewControllerWithRestorationIdentifierPath(identifierComponents: [AnyObject], coder: NSCoder) -> UIViewController? {
+        guard let path = coder.decodeObjectForKey(restorablePostObjectURLhKey) as? String else {
+            return nil
+        }
+
+        let context = ContextManager.sharedInstance().mainContext
+        guard let url = NSURL(string:path),
+            let objectID = context.persistentStoreCoordinator?.managedObjectIDForURIRepresentation(url) else {
+            return nil
+        }
+
+        guard let post = (try? context.existingObjectWithID(objectID)) as? ReaderPost else {
+            return nil
+        }
+
+        return controllerWithPost(post)
+    }
+
+
+    public override func encodeRestorableStateWithCoder(coder: NSCoder) {
+        if let post = post {
+            coder.encodeObject(post.objectID.URIRepresentation().absoluteString, forKey: self.dynamicType.restorablePostObjectURLhKey)
+        }
+
+        super.encodeRestorableStateWithCoder(coder)
+    }
+
+
     // MARK: - LifeCycle Methods
+
 
     deinit {
         post?.removeObserver(self, forKeyPath: DetailConstants.LikeCountKeyPath)
         NSNotificationCenter.defaultCenter().removeObserver(self)
+    }
+
+
+    public override func awakeAfterUsingCoder(aDecoder: NSCoder) -> AnyObject? {
+        restorationClass = self.dynamicType
+
+        return super.awakeAfterUsingCoder(aDecoder)
     }
 
 
@@ -132,7 +176,7 @@ final public class ReaderDetailViewController : UIViewController
 
         setupNavBar()
 
-        if post != nil {
+        if let _ = post {
             configureView()
         }
     }
@@ -143,7 +187,10 @@ final public class ReaderDetailViewController : UIViewController
 
         // The UIApplicationDidBecomeActiveNotification notification is broadcast
         // when the app is resumed as a part of split screen multitasking on the iPad.
-        NSNotificationCenter.defaultCenter().addObserver(self, selector: "handleApplicationDidBecomeActive:", name: UIApplicationDidBecomeActiveNotification, object: nil)
+        NSNotificationCenter.defaultCenter().addObserver(self, selector: #selector(ReaderDetailViewController.handleApplicationDidBecomeActive(_:)), name: UIApplicationDidBecomeActiveNotification, object: nil)
+
+        bumpStats()
+        bumpPageViewsForPost()
     }
 
 
@@ -159,7 +206,7 @@ final public class ReaderDetailViewController : UIViewController
     public override func traitCollectionDidChange(previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
 
-        // This is something we do to help with the resizing that can occur with 
+        // This is something we do to help with the resizing that can occur with
         // split screen multitasking on the iPad.
         view.layoutIfNeeded()
 
@@ -182,7 +229,7 @@ final public class ReaderDetailViewController : UIViewController
         }
 
         // The image frames in the WPRichTextView are a little bit dumb about their
-        // resizing after an orientation change. Use the completion block to 
+        // resizing after an orientation change. Use the completion block to
         // refresh media layout.
         coordinator.animateAlongsideTransition(nil) { (_) in
             self.richTextView.refreshLayout()
@@ -279,7 +326,7 @@ final public class ReaderDetailViewController : UIViewController
         bumpPageViewsForPost()
 
         NSNotificationCenter.defaultCenter().addObserver(self,
-            selector: "handleBlockSiteNotification:",
+            selector: #selector(ReaderDetailViewController.handleBlockSiteNotification(_:)),
             name: ReaderPostMenu.BlockSiteNotification,
             object: nil)
     }
@@ -296,7 +343,7 @@ final public class ReaderDetailViewController : UIViewController
         let image = UIImage(named: "icon-posts-share")!
         let button = CustomHighlightButton(frame: CGRect(x: 0, y: 0, width: image.size.width, height: image.size.height))
         button.setImage(image, forState: .Normal)
-        button.addTarget(self, action: "didTapShareButton:", forControlEvents: .TouchUpInside)
+        button.addTarget(self, action: #selector(ReaderDetailViewController.didTapShareButton(_:)), forControlEvents: .TouchUpInside)
 
         let shareButton = UIBarButtonItem(customView: button)
         shareButton.accessibilityLabel = NSLocalizedString("Share", comment:"Spoken accessibility label")
@@ -324,7 +371,7 @@ final public class ReaderDetailViewController : UIViewController
 
         // If the button is enabled also listen for taps on the avatar.
         if blogNameButton.enabled {
-            let tgr = UITapGestureRecognizer(target: self, action: "didTapHeaderAvatar:")
+            let tgr = UITapGestureRecognizer(target: self, action: #selector(ReaderDetailViewController.didTapHeaderAvatar(_:)))
             blavatarImageView.addGestureRecognizer(tgr)
         }
 
@@ -382,12 +429,12 @@ final public class ReaderDetailViewController : UIViewController
 
         // Now that we have the image, create an aspect ratio constraint for
         // the featuredImageView
-        let ratio = image.size.width / image.size.height
+        let ratio = image.size.height / image.size.width
         let constraint = NSLayoutConstraint(item: featuredImageView,
-            attribute: .Width,
+            attribute: .Height,
             relatedBy: .Equal,
             toItem: featuredImageView,
-            attribute: .Height,
+            attribute: .Width,
             multiplier: ratio,
             constant: 0)
         constraint.priority = UILayoutPriorityDefaultHigh
@@ -396,7 +443,7 @@ final public class ReaderDetailViewController : UIViewController
         featuredImageView.image = image
 
         // Listen for taps so we can display the image detail
-        let tgr = UITapGestureRecognizer(target: self, action: "didTapFeaturedImage:")
+        let tgr = UITapGestureRecognizer(target: self, action: #selector(ReaderDetailViewController.didTapFeaturedImage(_:)))
         featuredImageView.addGestureRecognizer(tgr)
     }
 
@@ -404,7 +451,7 @@ final public class ReaderDetailViewController : UIViewController
     private func requestForURL(url:NSURL) -> NSURLRequest {
         var requestURL = url
 
-        let absoluteString = requestURL.absoluteString
+        let absoluteString = requestURL.absoluteString ?? ""
         if !absoluteString.hasPrefix("https") {
             let sslURL = absoluteString.stringByReplacingOccurrencesOfString("http", withString: "https")
             requestURL = NSURL(string: sslURL)!
@@ -425,8 +472,7 @@ final public class ReaderDetailViewController : UIViewController
 
     private func configureTitle() {
         if let title = post?.titleForDisplay() {
-            let attributes = WPStyleGuide.readerDetailTitleAttributes() as! [String: AnyObject]
-            titleLabel.attributedText = NSAttributedString(string: title, attributes: attributes)
+            titleLabel.attributedText = NSAttributedString(string: title, attributes: WPStyleGuide.readerDetailTitleAttributes())
             titleLabel.hidden = false
 
         } else {
@@ -434,12 +480,14 @@ final public class ReaderDetailViewController : UIViewController
             titleLabel.hidden = true
         }
     }
-    
+
 
     private func configureByLine() {
         // Avatar
-        let placeholder = UIImage(named: "gravatar-reader")
-        if let url = NSURL(string: post!.authorAvatarURL) {
+        let placeholder = UIImage(named: "gravatar")
+
+        if let avatarURLString = post?.authorAvatarURL,
+            let url = NSURL(string: avatarURLString) {
             avatarImageView.setImageWithURL(url, placeholderImage: placeholder)
         }
 
@@ -454,6 +502,12 @@ final public class ReaderDetailViewController : UIViewController
 
     private func configureRichText() {
         richTextView.delegate = self
+        let fontSize = WPStyleGuide.Detail.contentFontSize
+        let lineHeight = WPStyleGuide.Detail.contentLineHeight
+        var textOptions = richTextView.textOptions
+        textOptions[DTDefaultFontSize] = WPStyleGuide.Cards.contentFontSize
+        textOptions[DTDefaultLineHeightMultiplier] = lineHeight / fontSize
+        richTextView.textOptions = textOptions
         richTextView.content = post!.contentForDisplay()
         richTextView.privateContent = post!.isPrivate()
     }
@@ -464,9 +518,7 @@ final public class ReaderDetailViewController : UIViewController
             attributionView.hidden = true
         } else {
             attributionView.configureViewWithVerboseSiteAttribution(post!)
-
-            let tgr = UITapGestureRecognizer(target: self, action: "didTapDiscoverAttribution")
-            attributionView.addGestureRecognizer(tgr)
+            attributionView.delegate = self
         }
     }
 
@@ -576,7 +628,7 @@ final public class ReaderDetailViewController : UIViewController
                     let rotate = CGAffineTransformMakeRotation(angle)
                     let scale = CGAffineTransformMakeScale(0.75, 0.75)
                     imageView.transform = CGAffineTransformConcat(rotate, scale)
-                    imageView.alpha = 1.0;
+                    imageView.alpha = 1.0
                     imageView.center = likeImageView.center // In case the button's imageView shifted position
                 },
                 completion: { (_) in
@@ -598,7 +650,7 @@ final public class ReaderDetailViewController : UIViewController
                     let rotate = CGAffineTransformMakeRotation(angle)
                     let scale = CGAffineTransformMakeScale(3.0, 3.0)
                     imageView.transform = CGAffineTransformConcat(rotate, scale)
-                    imageView.alpha = 0;
+                    imageView.alpha = 0
                 },
                 completion: { (_) in
                     imageView.removeFromSuperview()
@@ -629,6 +681,7 @@ final public class ReaderDetailViewController : UIViewController
 
     func presentWebViewControllerWithURL(url:NSURL) {
         let controller = WPWebViewController.authenticatedWebViewController(url)
+        controller.addsWPComReferrer = true
         let navController = UINavigationController(rootViewController: controller)
         presentViewController(navController, animated: true, completion: nil)
     }
@@ -654,25 +707,36 @@ final public class ReaderDetailViewController : UIViewController
             footerViewHeightConstraint.constant = 0.0
             UIView.animateWithDuration(0.3,
                 delay: 0.0,
-                options: UIViewAnimationOptions.BeginFromCurrentState,
+                options: [.BeginFromCurrentState, .AllowUserInteraction],
                 animations: { () -> Void in
                     self.view.layoutIfNeeded()
                 }, completion: nil)
 
         } else {
             // Shows the navbar and footer view
+            let pinToBottom = isScrollViewAtBottom()
+
             navigationController?.setNavigationBarHidden(false, animated: true)
             footerViewHeightConstraint.constant = footerViewHeightConstraintConstant
             UIView.animateWithDuration(0.3,
                 delay: 0.0,
-                options: UIViewAnimationOptions.BeginFromCurrentState,
-                animations: { () -> Void in
+                options: [.BeginFromCurrentState, .AllowUserInteraction],
+                animations: {
                     self.view.layoutIfNeeded()
+                    if pinToBottom {
+                        let y = self.scrollView.contentSize.height - self.scrollView.frame.height
+                        self.scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+                    }
+
                 }, completion: nil)
         }
 
     }
 
+
+    func isScrollViewAtBottom() -> Bool {
+        return scrollView.contentOffset.y + scrollView.frame.height == scrollView.contentSize.height
+    }
 
     // MARK: - Analytics
 
@@ -680,72 +744,41 @@ final public class ReaderDetailViewController : UIViewController
         if didBumpStats {
             return
         }
+
+        guard let readerPost = post where isViewLoaded() && view.window != nil else {
+            return
+        }
+
         didBumpStats = true
 
         let isOfflineView = ReachabilityUtils.isInternetReachable() ? "no" : "yes"
-        let detailType = post!.topic?.type == ReaderSiteTopic.TopicType ? DetailAnalyticsConstants.TypePreviewSite : DetailAnalyticsConstants.TypeNormal
+        let detailType = readerPost.topic?.type == ReaderSiteTopic.TopicType ? DetailAnalyticsConstants.TypePreviewSite : DetailAnalyticsConstants.TypeNormal
 
-        var properties = ReaderHelpers.statsPropertiesForPost(post!, andValue: nil, forKey: nil)
+
+        var properties = ReaderHelpers.statsPropertiesForPost(readerPost, andValue: nil, forKey: nil)
         properties[DetailAnalyticsConstants.TypeKey] = detailType
         properties[DetailAnalyticsConstants.OfflineKey] = isOfflineView
-        WPAppAnalytics.track(WPAnalyticsStat.ReaderArticleOpened, withProperties: properties)
+        WPAppAnalytics.track(.ReaderArticleOpened, withProperties: properties)
+
+        // We can remove the nil check and use `if let` when `ReaderPost` adopts nullibility.
+        let railcar = readerPost.railcarDictionary()
+        if railcar != nil {
+            WPAppAnalytics.trackTrainTracksInteraction(.ReaderArticleOpened, withProperties: railcar)
+        }
     }
 
 
     private func bumpPageViewsForPost() {
-        if didBumpPageViews || (post!.isExternal && !post!.isJetpack) {
+        if didBumpPageViews {
             return
         }
+
+        guard let readerPost = post where isViewLoaded() && view.window != nil else {
+            return
+        }
+
         didBumpPageViews = true
-
-        // Don't bump page views for feeds else the wrong blog/post get's bumped
-        if post!.isExternal && !post!.isJetpack {
-            return
-        }
-
-        // If the user is an admin on the post's site do not bump the page view unless
-        // the the post is private.
-        if !post!.isPrivate() && isUserAdminOnSiteWithID(post!.siteID) {
-            return
-        }
-
-        let site = NSURL(string: post!.blogURL)
-        if site?.host == nil {
-            return
-        }
-
-        let pixel = "https://pixel.wp.com/g.gif"
-        let params:NSArray = [
-            "v=wpcom",
-            "reader=1",
-            "ref=\(DetailAnalyticsConstants.PixelStatReferrer)",
-            "host=\(site!.host!)",
-            "blog=\(post!.siteID)",
-            "post=\(post!.postID)",
-            NSString(format:"t=%d", arc4random())
-        ]
-
-        let userAgent = WordPressAppDelegate.sharedInstance().userAgent.wordPressUserAgent
-        let path  = NSString(format: "%@?%@", pixel, params.componentsJoinedByString("&")) as String
-        let url = NSURL(string: path)
-
-        let request = NSMutableURLRequest(URL: url!)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        request.addValue(DetailAnalyticsConstants.PixelStatReferrer, forHTTPHeaderField: "Referer")
-
-        let session = NSURLSession.sharedSession()
-        let task = session.dataTaskWithRequest(request)
-        task.resume()
-    }
-
-
-    private func isUserAdminOnSiteWithID(siteID:NSNumber) -> Bool {
-        let context = ContextManager.sharedInstance().mainContext
-        let blogService = BlogService(managedObjectContext: context)
-        if let blog = blogService.blogByBlogId(siteID) {
-            return blog.isAdmin
-        }
-        return false
+        ReaderHelpers.bumpPageViewForPost(readerPost)
     }
 
 
@@ -779,7 +812,15 @@ final public class ReaderDetailViewController : UIViewController
             return
         }
 
-        let service = ReaderPostService(managedObjectContext: post!.managedObjectContext)
+        guard let post = post else {
+            return
+        }
+
+        if !post.isLiked {
+            WPNotificationFeedbackGenerator.notificationOccurred(.Success)
+        }
+
+        let service = ReaderPostService(managedObjectContext: post.managedObjectContext)
         service.toggleLikedForPost(post, success: nil, failure: { (error:NSError?) in
             if let anError = error {
                 DDLogSwift.logError("Error (un)liking post: \(anError.localizedDescription)")
@@ -843,7 +884,7 @@ final public class ReaderDetailViewController : UIViewController
 
 
     func didTapShareButton(sender: UIButton) {
-        ReaderHelpers.sharePost(post!, fromView: sender, inViewController: self)
+        sharingController.shareReaderPost(post!, fromView: sender, inViewController: self)
     }
 
 
@@ -853,6 +894,15 @@ final public class ReaderDetailViewController : UIViewController
                 navigationController?.popViewControllerAnimated(true)
             }
         }
+    }
+}
+
+// MARK: - ReaderCardDiscoverAttributionView Delegate Methods
+
+extension ReaderDetailViewController : ReaderCardDiscoverAttributionViewDelegate
+{
+    public func attributionActionSelectedForVisitingSite(view: ReaderCardDiscoverAttributionView) {
+        didTapDiscoverAttribution()
     }
 }
 
@@ -885,14 +935,18 @@ extension ReaderDetailViewController : WPRichTextViewDelegate
     public func richTextView(richTextView: WPRichTextView, didReceiveLinkAction linkURL: NSURL) {
         var url = linkURL
         if url.host != nil {
-            let postURL = NSURL(string: post!.permaLink)
-            url = NSURL(string: linkURL.absoluteString, relativeToURL: postURL)!
+            if let postURLString = post?.permaLink {
+                let postURL = NSURL(string: postURLString)
+                url = NSURL(string: linkURL.absoluteString!, relativeToURL: postURL)!
+            }
         }
         presentWebViewControllerWithURL(url)
     }
 
 }
 
+
+// MARK: - UIScrollView Delegate Methods
 
 extension ReaderDetailViewController : UIScrollViewDelegate
 {
@@ -901,8 +955,8 @@ extension ReaderDetailViewController : UIScrollViewDelegate
             return
         }
 
-        // The threshold for hiding the bars is twice the height of the hidden bars. 
-        // This ensures that once the bars are hidden the view can still be scrolled 
+        // The threshold for hiding the bars is twice the height of the hidden bars.
+        // This ensures that once the bars are hidden the view can still be scrolled
         // and thus can unhide the bars.
         var threshold = footerViewHeightConstraintConstant
         if let navHeight = navigationController?.navigationBar.frame.height {
@@ -914,6 +968,23 @@ extension ReaderDetailViewController : UIScrollViewDelegate
         if y > scrollView.contentOffset.y && y > threshold {
             setBarsHidden(true)
         } else {
+            // Velocity will be 0,0 if the user taps to stop an in progress scroll.
+            // If the bars are already visible its fine but if the bars are hidden
+            // we don't want to jar the user by having them reappear.
+            if !CGPointEqualToPoint(velocity, CGPointZero) {
+                setBarsHidden(false)
+            }
+        }
+    }
+
+
+    public func scrollViewDidScrollToTop(scrollView: UIScrollView) {
+        setBarsHidden(false)
+    }
+
+
+    public func scrollViewDidEndDecelerating(scrollView: UIScrollView) {
+        if isScrollViewAtBottom() {
             setBarsHidden(false)
         }
     }

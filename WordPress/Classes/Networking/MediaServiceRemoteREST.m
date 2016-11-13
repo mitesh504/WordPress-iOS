@@ -1,42 +1,39 @@
 #import "MediaServiceRemoteREST.h"
-#import "WordPressComApi.h"
 #import "RemoteMedia.h"
 #import "NSDate+WordPressJSON.h"
-#import <WordPressApi/WordPressApi.h>
+#import "WordPress-Swift.h"
 
 const NSInteger WPRestErrorCodeMediaNew = 10;
 
 @implementation MediaServiceRemoteREST
 
 - (void)getMediaWithID:(NSNumber *)mediaID
-             forBlogID:(NSNumber *)blogID
                success:(void (^)(RemoteMedia *remoteMedia))success
                failure:(void (^)(NSError *error))failure
 {
-    NSString *apiPath = [NSString stringWithFormat:@"sites/%@/media/%@", blogID, mediaID];
+    NSString *apiPath = [NSString stringWithFormat:@"sites/%@/media/%@", self.siteID, mediaID];
     NSString *requestUrl = [self pathForEndpoint:apiPath
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
     NSDictionary * parameters = @{};
     
-    [self.api GET:requestUrl parameters:parameters success:^(AFHTTPRequestOperation *operation, id responseObject) {
+    [self.wordPressComRestApi GET:requestUrl parameters:parameters success:^(id responseObject, NSHTTPURLResponse *response) {
         if (success) {
             NSDictionary *response = (NSDictionary *)responseObject;
             success([self remoteMediaFromJSONDictionary:response]);
         }
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *response) {
         if (failure) {
             failure(error);
         }
     }];
 }
 
-- (void)getMediaLibraryForBlogID:(NSNumber *)blogID
-                         success:(void (^)(NSArray *))success
-                         failure:(void (^)(NSError *))failure
+- (void)getMediaLibraryWithSuccess:(void (^)(NSArray *))success
+                           failure:(void (^)(NSError *))failure
 {
     NSMutableArray *media = [NSMutableArray array];
-    NSString *path = [NSString stringWithFormat:@"sites/%@/media", blogID];
+    NSString *path = [NSString stringWithFormat:@"sites/%@/media", self.siteID];
     [self getMediaLibraryPage:nil
                         media:media
                          path:path
@@ -57,11 +54,11 @@ const NSInteger WPRestErrorCodeMediaNew = 10;
     }
     
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
        parameters:[NSDictionary dictionaryWithDictionary:parameters]
-          success:^(AFHTTPRequestOperation *operation, id responseObject) {
+          success:^(id responseObject, NSHTTPURLResponse *response) {
               NSArray *mediaItems = responseObject[@"media"];
               NSArray *pageItems = [self remoteMediaFromJSONArray:mediaItems];
               if (pageItems.count) {
@@ -79,33 +76,32 @@ const NSInteger WPRestErrorCodeMediaNew = 10;
                   success([NSArray arrayWithArray:media]);
               }
           }
-          failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          failure:^(NSError *error, NSHTTPURLResponse *response) {
               if (failure) {
                   failure(error);
               }
           }];
 }
 
-- (void)getMediaLibraryCountForBlogID:(NSNumber *)blogID
-                              success:(void (^)(NSInteger))success
-                              failure:(void (^)(NSError *))failure
+- (void)getMediaLibraryCountWithSuccess:(void (^)(NSInteger))success
+                                failure:(void (^)(NSError *))failure
 {
-    NSString *path = [NSString stringWithFormat:@"sites/%@/media", blogID];
+    NSString *path = [NSString stringWithFormat:@"sites/%@/media", self.siteID];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
     NSDictionary *parameters = @{ @"number" : @1 };
     
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
        parameters:[NSDictionary dictionaryWithDictionary:parameters]
-          success:^(AFHTTPRequestOperation *operation, id responseObject) {
+          success:^(id responseObject, NSHTTPURLResponse *response) {
               NSDictionary *jsonDictionary = (NSDictionary *)responseObject;
               NSNumber *count = [jsonDictionary numberForKey:@"found"];
               if (success) {
                   success([count intValue]);
               }
           }
-          failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          failure:^(NSError *error, NSHTTPURLResponse *response) {
               if (failure) {
                   failure(error);
               }
@@ -113,29 +109,27 @@ const NSInteger WPRestErrorCodeMediaNew = 10;
 }
 
 - (void)createMedia:(RemoteMedia *)media
-          forBlogID:(NSNumber *)blogID
            progress:(NSProgress **)progress
             success:(void (^)(RemoteMedia *remoteMedia))success
             failure:(void (^)(NSError *error))failure
 {
-    NSProgress *localProgress = [NSProgress progressWithTotalUnitCount:2];
     NSString *path = media.localURL;
     NSString *type = media.mimeType;
     NSString *filename = media.file;
 
-    NSString *apiPath = [NSString stringWithFormat:@"sites/%@/media/new", blogID];
+    NSString *apiPath = [NSString stringWithFormat:@"sites/%@/media/new", self.siteID];
     NSString *requestUrl = [self pathForEndpoint:apiPath
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
-    
-    NSMutableURLRequest *request = [self.api.requestSerializer multipartFormRequestWithMethod:@"POST"
-                                                                                    URLString:[[NSURL URLWithString:requestUrl relativeToURL:self.api.baseURL] absoluteString]
-                                                                                   parameters:nil
-                                                                    constructingBodyWithBlock:^(id<AFMultipartFormData> formData) {
-        NSURL *url = [[NSURL alloc] initFileURLWithPath:path];
-        [formData appendPartWithFileURL:url name:@"media[]" fileName:filename mimeType:type error:nil];
-    } error:nil];
-    
-    AFHTTPRequestOperation *operation = [self.api HTTPRequestOperationWithRequest:request success:^(AFHTTPRequestOperation *    operation, id responseObject) {
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
+    NSMutableDictionary *parameters = [NSMutableDictionary dictionaryWithDictionary:@{}];
+    if (media.postID != nil && [media.postID compare:@(0)] == NSOrderedDescending) {
+        parameters[@"attrs[0][parent_id]"] = media.postID;
+    }
+    NSURL *url = [[NSURL alloc] initFileURLWithPath:path];
+    FilePart *filePart = [[FilePart alloc] initWithParameterName:@"media[]" url:url filename:filename mimeType:type];
+    __block NSProgress *localProgress = [self.wordPressComRestApi multipartPOST:requestUrl
+                                                    parameters:parameters
+                                                     fileParts:@[filePart]
+                                                       success:^(id  _Nonnull responseObject, NSHTTPURLResponse * _Nullable httpResponse) {
         NSDictionary *response = (NSDictionary *)responseObject;
         NSArray * errorList = response[@"error"];
         NSArray * mediaList = response[@"media"];
@@ -143,48 +137,54 @@ const NSInteger WPRestErrorCodeMediaNew = 10;
             RemoteMedia * remoteMedia = [self remoteMediaFromJSONDictionary:mediaList[0]];
             if (success) {
                 success(remoteMedia);
-            }
-            localProgress.completedUnitCount=localProgress.totalUnitCount;
+            }            
         } else {
             DDLogDebug(@"Error uploading file: %@", errorList);
-            localProgress.totalUnitCount=0;
-            localProgress.completedUnitCount=0;
             NSError * error = nil;
             if (errorList.count > 0){
                 NSDictionary * errorDictionary = @{NSLocalizedDescriptionKey: errorList[0]};
-                error = [NSError errorWithDomain:WordPressRestApiErrorDomain code:WPRestErrorCodeMediaNew userInfo:errorDictionary];
+                error = [NSError errorWithDomain:WordPressComRestApiErrorDomain code:WordPressComRestApiErrorUploadFailed userInfo:errorDictionary];
             }
             if (failure) {
                 failure(error);
             }
         }
         
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
+        localProgress.totalUnitCount = 0;
+        localProgress.completedUnitCount = 0;
         DDLogDebug(@"Error uploading file: %@", [error localizedDescription]);
-        localProgress.totalUnitCount=0;
-        localProgress.completedUnitCount=0;
         if (failure) {
             failure(error);
         }
     }];
+    *progress = localProgress;
+}
 
-    // Setup progress object
-    [operation setUploadProgressBlock:^(NSUInteger bytesWritten, long long totalBytesWritten, long long totalBytesExpectedToWrite) {
-        localProgress.completedUnitCount +=bytesWritten;
-    }];
-    unsigned long long size = [[request valueForHTTPHeaderField:@"Content-Length"] longLongValue];
-    // Adding some extra time because after the upload is done the backend takes some time to process the data sent
-    localProgress.totalUnitCount = size+1;
-    localProgress.cancellable = YES;
-    localProgress.pausable = NO;
-    localProgress.cancellationHandler = ^(){
-        [operation cancel];
-    };
-    
-    if (progress) {
-        *progress = localProgress;
-    }
-    [self.api.operationQueue addOperation:operation];
+- (void)updateMedia:(RemoteMedia *)media
+            success:(void (^)(RemoteMedia *remoteMedia))success
+            failure:(void (^)(NSError *error))failure
+{
+    NSParameterAssert([media isKindOfClass:[RemoteMedia class]]);
+
+    NSString *path = [NSString stringWithFormat:@"sites/%@/media/%@", self.siteID, media.mediaID];
+    NSString *requestUrl = [self pathForEndpoint:path
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
+
+    NSDictionary *parameters = [self parametersFromRemoteMedia:media];
+
+    [self.wordPressComRestApi POST:requestUrl
+        parameters:parameters
+           success:^(id responseObject, NSHTTPURLResponse *response) {
+               RemoteMedia *media = [self remoteMediaFromJSONDictionary:responseObject];
+               if (success) {
+                   success(media);
+               }
+           } failure:^(NSError *error, NSHTTPURLResponse *response) {
+               if (failure) {
+                   failure(error);
+               }
+           }];
 }
 
 - (NSArray *)remoteMediaFromJSONArray:(NSArray *)jsonMedia
@@ -198,8 +198,8 @@ const NSInteger WPRestErrorCodeMediaNew = 10;
 {
     RemoteMedia * remoteMedia=[[RemoteMedia alloc] init];
     remoteMedia.mediaID =  [jsonMedia numberForKey:@"ID"];
-    remoteMedia.url = [NSURL URLWithString:jsonMedia[@"URL"]];
-    remoteMedia.guid = [NSURL URLWithString:jsonMedia[@"guid"]];
+    remoteMedia.url = [NSURL URLWithString:[jsonMedia stringForKey:@"URL"]];
+    remoteMedia.guid = [NSURL URLWithString:[jsonMedia stringForKey:@"guid"]];
     remoteMedia.date = [NSDate dateWithWordPressComJSONString:jsonMedia[@"date"]];
     remoteMedia.postID = [jsonMedia numberForKey:@"post_ID"];
     remoteMedia.file = [jsonMedia stringForKey:@"file"];
@@ -217,5 +217,26 @@ const NSInteger WPRestErrorCodeMediaNew = 10;
     return remoteMedia;
 }
 
+- (NSDictionary *)parametersFromRemoteMedia:(RemoteMedia *)remoteMedia
+{
+    NSMutableDictionary *parameters = [NSMutableDictionary dictionary];
+
+    if (remoteMedia.postID != nil) {
+        parameters[@"parent_id"] = remoteMedia.postID;
+    }
+    if (remoteMedia.title != nil) {
+        parameters[@"title"] = remoteMedia.title;
+    }
+
+    if (remoteMedia.caption != nil) {
+        parameters[@"caption"] = remoteMedia.caption;
+    }
+
+    if (remoteMedia.descriptionText != nil) {
+        parameters[@"description"] = remoteMedia.descriptionText;
+    }
+
+    return [NSDictionary dictionaryWithDictionary:parameters];
+}
 
 @end

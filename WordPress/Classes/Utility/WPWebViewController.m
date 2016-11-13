@@ -13,7 +13,7 @@
 #import "WPStyleGuide+WebView.h"
 #import "WordPress-Swift.h"
 
-
+@import Gridicons;
 
 #pragma mark - Constants
 
@@ -31,6 +31,10 @@ static CGFloat const WPWebViewAnimationLongDuration         = 0.4;
 static CGFloat const WPWebViewAnimationAlphaVisible         = 1.0;
 static CGFloat const WPWebViewAnimationAlphaHidden          = 0.0;
 
+static NSString *const WPComReferrerURL = @"https://wordpress.com";
+
+static NSString *const WPWebViewWebKitErrorDomain = @"WebKitErrorDomain";
+static NSInteger const WPWebViewErrorPluginHandledLoad = 204;
 
 #pragma mark - Private Properties
 
@@ -91,6 +95,11 @@ static CGFloat const WPWebViewAnimationAlphaHidden          = 0.0;
     self.backButton.accessibilityLabel      = NSLocalizedString(@"Back",    @"Previous web page");
     self.forwardButton.accessibilityLabel   = NSLocalizedString(@"Forward", @"Next web page");
     
+    self.optionsButton.image                = [Gridicon iconOfType:GridiconTypeShareIOS];
+    self.dismissButton.image                = [Gridicon iconOfType:GridiconTypeCross];
+    self.backButton.image                   = [Gridicon iconOfType:GridiconTypeChevronLeft];
+    self.forwardButton.image                = [Gridicon iconOfType:GridiconTypeChevronRight];
+    
     // Toolbar: Hidden by default!
     self.toolbar.barTintColor               = [UIColor whiteColor];
     self.backButton.tintColor               = [WPStyleGuide greyLighten10];
@@ -101,8 +110,10 @@ static CGFloat const WPWebViewAnimationAlphaHidden          = 0.0;
     self.webView.scalesPageToFit            = YES;
     
     // Share
-    self.navigationItem.rightBarButtonItem  = self.optionsButton;
-    
+    if (!self.secureInteraction) {
+        self.navigationItem.rightBarButtonItem  = self.optionsButton;
+    }
+
     // Fire away!
     [self applyModalStyleIfNeeded];
     [self loadWebViewRequest];
@@ -237,6 +248,10 @@ static CGFloat const WPWebViewAnimationAlphaHidden          = 0.0;
 
 - (void)showBottomToolbarIfNeeded
 {
+    if (self.secureInteraction) {
+        return;
+    }
+
     if (!self.webView.canGoBack && !self.webView.canGoForward) {
         return;
     }
@@ -295,7 +310,7 @@ static CGFloat const WPWebViewAnimationAlphaHidden          = 0.0;
 
 - (IBAction)showLinkOptions
 {
-    NSString* permaLink             = [self documentPermalink];
+    NSString *permaLink             = [self documentPermalink];
     NSString *title                 = [self documentTitle];
     NSMutableArray *activityItems   = [NSMutableArray array];
     
@@ -383,8 +398,15 @@ static CGFloat const WPWebViewAnimationAlphaHidden          = 0.0;
     // Don't show Ajax Cancelled or Frame Load Interrupted errors
     if (error.code == WPWebViewErrorAjaxCancelled || error.code == WPWebViewErrorFrameLoadInterrupted) {
         return;
+    } else if ([error.domain isEqualToString:WPWebViewWebKitErrorDomain] && error.code == WPWebViewErrorPluginHandledLoad) {
+        return;
     }
-    
+
+    [self displayLoadError:error];
+}
+
+- (void)displayLoadError:(NSError *)error
+{
     [WPError showAlertWithTitle:NSLocalizedString(@"Error", nil) message:error.localizedDescription];
 }
 
@@ -438,27 +460,42 @@ static CGFloat const WPWebViewAnimationAlphaHidden          = 0.0;
 
 - (NSURLRequest *)newRequestForWebsite
 {
-    NSString *userAgent = [[WordPressAppDelegate sharedInstance].userAgent wordPressUserAgent];
+    NSString *userAgent = [WPUserAgent wordPressUserAgent];
+    NSURLRequest *request;
     if (!self.needsLogin) {
-        return [WPURLRequest requestWithURL:self.url userAgent:userAgent];
+        request = [WPURLRequest requestWithURL:self.url userAgent:userAgent];
+    } else {
+        NSURL *loginURL = self.wpLoginURL ?: [self authUrlFromUrl:self.url];
+        request = [WPURLRequest requestForAuthenticationWithURL:loginURL
+                                                    redirectURL:self.url
+                                                       username:self.username
+                                                       password:self.password
+                                                    bearerToken:self.authToken
+                                                      userAgent:userAgent];
     }
-    
-    NSURL *loginURL = self.wpLoginURL;
-    
-    if (!loginURL) {
-        // Thank you, iOS 9, everything is more compact and pretty, now.
-        NSURLComponents *components = [NSURLComponents new];
-        components.scheme           = self.url.scheme;
-        components.host             = self.url.host;
-        components.path             = @"/wp-login.php";
-        loginURL                    = components.URL;
+
+    if (self.addsWPComReferrer) {
+        NSMutableURLRequest *mReq = [request isKindOfClass:[NSMutableURLRequest class]] ? (NSMutableURLRequest *)request : [request mutableCopy];
+        [mReq setValue:WPComReferrerURL forHTTPHeaderField:@"Referer"];
+        request = mReq;
     }
-    return [WPURLRequest requestForAuthenticationWithURL:loginURL
-                                             redirectURL:self.url
-                                                username:self.username
-                                                password:self.password
-                                             bearerToken:self.authToken
-                                               userAgent:userAgent];
+
+    return request;
+}
+
+- (NSURL *)authUrlFromUrl:(NSURL *)url
+{
+    // Note:
+    // WordPress CDN doesn't really deal with Auth. We'll replace `.files.wordpress.com` with `.wordpress`.
+    // Don't worry, we'll redirect the user to the pristine URL afterwards. Issue #4983
+    //
+    NSURLComponents *components = [NSURLComponents new];
+    components.scheme           = url.scheme;
+    components.host             = [url.host stringByReplacingOccurrencesOfString:@".files.wordpress.com"
+                                                                      withString:@".wordpress.com"];
+    components.path             = @"/wp-login.php";
+
+    return components.URL;
 }
 
 

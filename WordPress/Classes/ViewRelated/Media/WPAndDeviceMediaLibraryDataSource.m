@@ -1,7 +1,6 @@
 #import "WPAndDeviceMediaLibraryDataSource.h"
 #import "MediaLibraryPickerDataSource.h"
 #import "Blog.h"
-#import "Post.h"
 
 @interface WPAndDeviceMediaLibraryDataSource()
     @property (nonatomic, strong) MediaLibraryPickerDataSource *mediaLibraryDataSource;
@@ -95,16 +94,16 @@
 {
     NSUUID *blockKey = [NSUUID UUID];
     __weak __typeof__(self) weakSelf = self;
-    id<NSObject> oneKey = [self.deviceLibraryDataSource registerChangeObserverBlock:^{
+    id<NSObject> oneKey = [self.deviceLibraryDataSource registerChangeObserverBlock:^(BOOL incrementalChanges, NSIndexSet *removed, NSIndexSet *inserted, NSIndexSet *changed, NSArray<id<WPMediaMove>> *moved) {
         if (weakSelf.currentDataSource == weakSelf.deviceLibraryDataSource) {
             if (callback) {
-                callback();
+                callback(incrementalChanges, removed, inserted, changed, moved);
             }
         }
     }];
-    id<NSObject> secondKey = [self.mediaLibraryDataSource registerChangeObserverBlock:^{
+    id<NSObject> secondKey = [self.mediaLibraryDataSource registerChangeObserverBlock:^(BOOL incrementalChanges, NSIndexSet *removed, NSIndexSet *inserted, NSIndexSet *changed, NSArray<id<WPMediaMove>> *moved) {
         if (callback) {
-            callback();
+            callback(incrementalChanges, removed, inserted, changed, moved);
         }
     }];
     
@@ -122,10 +121,21 @@
     [self.mediaLibraryDataSource unregisterChangeObserver:keys[1]];
 }
 
-- (void)loadDataWithSuccess:(WPMediaChangesBlock)successBlock
+- (void)loadDataWithSuccess:(WPMediaSuccessBlock)successBlock
                     failure:(WPMediaFailureBlock)failureBlock
 {
-    [self.currentDataSource loadDataWithSuccess:successBlock failure:failureBlock];
+    [self.currentDataSource loadDataWithSuccess:successBlock failure:^(NSError *error) {
+        if ([error.domain isEqualToString:WPMediaPickerErrorDomain] && error.code == WPMediaErrorCodePermissionsFailed) {
+            if (self.currentDataSource == self.deviceLibraryDataSource) {                
+                self.currentDataSource = self.mediaLibraryDataSource;
+                [self loadDataWithSuccess:successBlock failure:failureBlock];
+                return;
+            }
+        }
+        if (failureBlock) {
+            failureBlock(error);
+        }
+    }];
 }
 
 - (void)addImage:(UIImage *)image metadata:(NSDictionary *)metadata completionBlock:(WPMediaAddedBlock)completionBlock
@@ -148,6 +158,18 @@
 {
     return [self.currentDataSource mediaTypeFilter];
 }
+
+- (void)setAscendingOrdering:(BOOL)ascending
+{
+    [self.mediaLibraryDataSource setAscendingOrdering:ascending];
+    [self.deviceLibraryDataSource setAscendingOrdering:ascending];
+}
+
+- (BOOL)ascendingOrdering
+{
+    return [self.currentDataSource ascendingOrdering];
+}
+
 
 
 

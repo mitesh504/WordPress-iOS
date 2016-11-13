@@ -1,3 +1,6 @@
+@import WordPressComStatsiOS;
+@import WordPressShared;
+
 #import "StatsViewController.h"
 #import "Blog.h"
 #import "WordPressAppDelegate.h"
@@ -5,14 +8,13 @@
 #import "WPAccount.h"
 #import "ContextManager.h"
 #import "BlogService.h"
-#import "SettingsViewController.h"
 #import "SFHFKeychainUtils.h"
 #import "TodayExtensionService.h"
-#import <WordPressComStatsiOS/WPStatsViewController.h>
-#import <WordPressShared/WPNoResultsView.h>
 #import "WordPress-Swift.h"
 #import "WPAppAnalytics.h"
 #import "WPWebViewController.h"
+
+@import WordPressComStatsiOS;
 
 static NSString *const StatsBlogObjectURLRestorationKey = @"StatsBlogObjectURL";
 
@@ -70,7 +72,7 @@ static NSString *const StatsBlogObjectURLRestorationKey = @"StatsBlogObjectURL";
 
 - (void)addStatsViewControllerToView
 {
-    if (self.presentingViewController == nil && WIDGETS_EXIST) {
+    if (self.presentingViewController == nil) {
         UIBarButtonItem *settingsButton = [[UIBarButtonItem alloc] initWithTitle:NSLocalizedString(@"Today", @"") style:UIBarButtonItemStylePlain target:self action:@selector(makeSiteTodayWidgetSite:)];
         self.navigationItem.rightBarButtonItem = settingsButton;
     }
@@ -96,7 +98,7 @@ static NSString *const StatsBlogObjectURLRestorationKey = @"StatsBlogObjectURL";
 
     // WordPress.com + Jetpack REST
     if (self.blog.account) {
-        self.statsVC.oauth2Token = self.blog.restApi.authToken;
+        self.statsVC.oauth2Token = self.blog.account.authToken;
         self.statsVC.siteID = self.blog.dotComID;
         [self addStatsViewControllerToView];
 
@@ -104,10 +106,10 @@ static NSString *const StatsBlogObjectURLRestorationKey = @"StatsBlogObjectURL";
     }
 
     // Jetpack Legacy (WPJetpackRESTEnabled == NO)
-    BOOL needsJetpackLogin = ![self.blog.jetpackAccount.restApi hasCredentials];
+    BOOL needsJetpackLogin = ![self.blog.jetpackAccount.wordPressComRestApi hasCredentials];
     if (!needsJetpackLogin && self.blog.jetpack.siteID && self.blog.jetpackAccount) {
         self.statsVC.siteID = self.blog.jetpack.siteID;
-        self.statsVC.oauth2Token = self.blog.jetpackAccount.restApi.authToken;
+        self.statsVC.oauth2Token = self.blog.jetpackAccount.authToken;
         [self addStatsViewControllerToView];
 
     } else {

@@ -10,7 +10,7 @@
 + (void)applyPostAuthorFilterStyle:(UISegmentedControl *)segmentControl
 {
     CGFloat fontSize = [UIDevice isPad] ? 14.0 : 12.0;
-    NSDictionary *attributes = @{NSFontAttributeName: [WPFontManager openSansRegularFontOfSize:fontSize]};
+    NSDictionary *attributes = @{NSFontAttributeName: [WPFontManager systemRegularFontOfSize:fontSize]};
     [segmentControl setTitleTextAttributes:attributes forState:UIControlStateNormal];
     segmentControl.tintColor = [WPStyleGuide grey];
     segmentControl.backgroundColor = [UIColor whiteColor];
@@ -40,14 +40,14 @@
 + (void)applyPostAuthorSiteStyle:(UILabel *)label
 {
     CGFloat fontSize = 14.0;
-    label.font = [WPFontManager openSansRegularFontOfSize:fontSize];
+    label.font = [WPFontManager systemRegularFontOfSize:fontSize];
     label.textColor = [self greyDarken20];
 }
 
 + (void)applyPostAuthorNameStyle:(UILabel *)label
 {
     CGFloat fontSize = 12.0;
-    label.font = [WPFontManager openSansRegularFontOfSize:fontSize];
+    label.font = [WPFontManager systemRegularFontOfSize:fontSize];
     label.textColor = [self grey];
 }
 
@@ -64,14 +64,14 @@
 + (void)applyPostDateStyle:(UILabel *)label
 {
     CGFloat fontSize = [UIDevice isPad] ? 14.0 : 12.0;
-    label.font = [WPFontManager openSansRegularFontOfSize:fontSize];
+    label.font = [WPFontManager systemRegularFontOfSize:fontSize];
     label.textColor = [self grey];
 }
 
 + (void)applyPostStatusStyle:(UILabel *)label
 {
     CGFloat fontSize = [UIDevice isPad] ? 14.0 : 12.0;
-    label.font = [WPFontManager openSansRegularFontOfSize:fontSize];
+    label.font = [WPFontManager systemRegularFontOfSize:fontSize];
     label.textColor = [self grey];
 }
 
@@ -79,13 +79,13 @@
 {
     CGFloat fontSize = [UIDevice isPad] ? 14.0 : 12.0;
     [button setTitleColor:[self grey] forState:UIControlStateNormal];
-    [button.titleLabel setFont:[WPFontManager openSansRegularFontOfSize:fontSize]];
+    [button.titleLabel setFont:[WPFontManager systemRegularFontOfSize:fontSize]];
 }
 
 + (void)applyRestorePostLabelStyle:(UILabel *)label
 {
     CGFloat fontSize = [UIDevice isPad] ? 14.0 : 12.0;
-    label.font = [WPFontManager openSansRegularFontOfSize:fontSize];
+    label.font = [WPFontManager systemRegularFontOfSize:fontSize];
     label.textColor = [self grey];
 }
 
@@ -94,9 +94,7 @@
     button.titleLabel.font = [WPStyleGuide subtitleFont];
     [button setTitleColor:[WPStyleGuide wordPressBlue] forState:UIControlStateNormal];
     [button setTitleColor:[WPStyleGuide darkBlue] forState:UIControlStateHighlighted];
-    button.imageEdgeInsets = UIEdgeInsetsMake(0.0, 0.0, 0.0, 3.0);
 }
-
 
 #pragma mark - Attributed String Attributes
 
@@ -107,7 +105,7 @@
     NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
     paragraphStyle.minimumLineHeight = lineHeight;
     paragraphStyle.maximumLineHeight = lineHeight;
-    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager openSansRegularFontOfSize:fontSize]};
+    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager systemRegularFontOfSize:fontSize]};
 }
 
 + (NSDictionary *)postCardAuthorNameAttributes
@@ -117,7 +115,7 @@
     NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
     paragraphStyle.minimumLineHeight = lineHeight;
     paragraphStyle.maximumLineHeight = lineHeight;
-    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager openSansRegularFontOfSize:fontSize]};
+    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager systemRegularFontOfSize:fontSize]};
 }
 
 + (NSDictionary *)postCardTitleAttributes
@@ -147,7 +145,7 @@
     NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
     paragraphStyle.minimumLineHeight = lineHeight;
     paragraphStyle.maximumLineHeight = lineHeight;
-    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager openSansRegularFontOfSize:fontSize]};
+    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager systemRegularFontOfSize:fontSize]};
 }
 
 + (NSDictionary *)postCardStatusAttributes
@@ -157,7 +155,34 @@
     NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
     paragraphStyle.minimumLineHeight = lineHeight;
     paragraphStyle.maximumLineHeight = lineHeight;
-    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager openSansRegularFontOfSize:fontSize]};
+    return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager systemRegularFontOfSize:fontSize]};
+}
+
++ (CGRect)navigationBarButtonRect
+{
+    return CGRectMake(0.0f, 0.0f, 30.0f, 30.0f);
+};
+
++ (CGFloat)spacingBetweeenNavbarButtons
+{
+    return 40.0f;
+}
+
++ (WPButtonForNavigationBar*)buttonForBarWithImage:(UIImage *)image
+                                            target:(id)target
+                                          selector:(SEL)selector
+{
+    WPButtonForNavigationBar* button = [[WPButtonForNavigationBar alloc] initWithFrame:[self navigationBarButtonRect]];
+    
+    button.tintColor = [UIColor whiteColor];
+    [button setImage:image forState:UIControlStateNormal];
+    [button addTarget:target action:selector forControlEvents:UIControlEventTouchUpInside];
+    button.removeDefaultLeftSpacing = YES;
+    button.removeDefaultRightSpacing = YES;
+    button.rightSpacing = [self spacingBetweeenNavbarButtons] / 2.0f;
+    button.leftSpacing = [self spacingBetweeenNavbarButtons] / 2.0f;
+    
+    return button;
 }
 
 
@@ -173,34 +198,31 @@
 + (NSDictionary *)pageCellTitleAttributes
 {
     CGFloat fontSize = 15.0;
-    CGFloat lineHeight = 22.5;
-    NSMutableParagraphStyle *paragraphStyle = [[NSMutableParagraphStyle alloc] init];
-    paragraphStyle.minimumLineHeight = lineHeight;
-    paragraphStyle.maximumLineHeight = lineHeight;
+    NSMutableParagraphStyle *paragraphStyle = [[NSParagraphStyle defaultParagraphStyle] mutableCopy];
+    paragraphStyle.lineSpacing = 4.0;
     return @{NSParagraphStyleAttributeName: paragraphStyle, NSFontAttributeName : [WPFontManager merriweatherRegularFontOfSize:fontSize]};
 }
 
 + (void)applySectionHeaderTitleStyle:(UILabel *)label
 {
     label.backgroundColor = [self lightGrey];
-    label.font = [WPFontManager openSansRegularFontOfSize:12.0];
+    label.font = [WPFontManager systemRegularFontOfSize:12.0];
     label.textColor = [self grey];
 }
 
 + (void)applyRestorePageLabelStyle:(UILabel *)label
 {
     CGFloat fontSize = 14.0;
-    label.font = [WPFontManager openSansRegularFontOfSize:fontSize];
+    label.font = [WPFontManager systemRegularFontOfSize:fontSize];
     label.textColor = [self grey];
 }
 
 + (void)applyRestorePageButtonStyle:(UIButton *)button
 {
     CGFloat fontSize = 14.0;
-    button.titleLabel.font = [WPFontManager openSansSemiBoldFontOfSize:fontSize];
+    button.titleLabel.font = [WPFontManager systemSemiBoldFontOfSize:fontSize];
     [button setTitleColor:[WPStyleGuide wordPressBlue] forState:UIControlStateNormal];
     [button setTitleColor:[WPStyleGuide darkBlue] forState:UIControlStateHighlighted];
-    button.imageEdgeInsets = UIEdgeInsetsMake(0.0, 0.0, 0.0, 3.0);
 }
 
 @end

@@ -1,7 +1,6 @@
 @import XCTest;
 @import OHHTTPStubs;
 @import OHHTTPStubs.OHPathHelpers;
-@import MGImageUtilities;
 
 #import "WPAvatarSource.h"
 
@@ -17,7 +16,7 @@
 {
     [super setUp];
 
-    _source = [WPAvatarSource sharedSource];
+    _source = [WPAvatarSource new];
     [OHHTTPStubs stubRequestsPassingTest:^BOOL(NSURLRequest *request) {
         return [[request.URL host] isEqualToString:@"gravatar.com"];
     } withStubResponse:^OHHTTPStubsResponse *(NSURLRequest *request) {
@@ -29,8 +28,9 @@
 
 - (void)tearDown
 {
-    _source = nil;
     [_source performSelector:@selector(purgeCaches)];
+    _source = nil;
+
     [OHHTTPStubs removeAllStubs];
 
     [super tearDown];
@@ -45,9 +45,9 @@
 
     XCTestExpectation *fetchExpectation = [self expectationWithDescription:@"fetch and download"];
     [_source fetchImageForGravatarEmail:email withSize:size success:^(UIImage *image) {
+        [fetchExpectation fulfill];
         XCTAssertNotNil(image, @"avatar should be downloaded");
         XCTAssertEqual(image.size.width, 48.f, @"avatar should be resized");
-        [fetchExpectation fulfill];
     }];
     [self waitForExpectationsWithTimeout:5.0 handler:nil];
 

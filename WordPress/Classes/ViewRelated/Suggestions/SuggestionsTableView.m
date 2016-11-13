@@ -13,7 +13,6 @@ CGFloat const STVSeparatorHeight = 1.f;
 @property (nonatomic, strong) UIView *headerView;
 @property (nonatomic, strong) UIView *separatorView;
 @property (nonatomic, strong) UITableView *tableView;
-@property (nonatomic, strong) NSNumber *siteID;
 @property (nonatomic, strong) NSArray *suggestions;
 @property (nonatomic, strong) NSString *searchText;
 @property (nonatomic, strong) NSMutableArray *searchResults;
@@ -25,12 +24,10 @@ CGFloat const STVSeparatorHeight = 1.f;
 
 #pragma mark Public methods
 
-- (instancetype)initWithSiteID:(NSNumber *)siteID
+- (instancetype)init
 {    
     self = [super initWithFrame:CGRectZero];
     if (self) {
-        _siteID = siteID;
-        _suggestions = [[SuggestionService sharedInstance] suggestionsForSiteID:_siteID];
         _searchText = @"";
         _enabled = YES;
         _searchResults = [[NSMutableArray alloc] init];
@@ -126,7 +123,7 @@ CGFloat const STVSeparatorHeight = 1.f;
                                                          attribute:NSLayoutAttributeHeight
                                                          relatedBy:NSLayoutRelationEqual
                                                             toItem:nil
-                                                         attribute:nil
+                                                         attribute:NSLayoutAttributeNotAnAttribute
                                                         multiplier:1
                                                           constant:0.f];
     self.heightConstraint.priority = 300;
@@ -264,9 +261,21 @@ CGFloat const STVSeparatorHeight = 1.f;
     cell.usernameLabel.text = [NSString stringWithFormat:@"@%@", suggestion.userLogin];
     cell.displayNameLabel.text = suggestion.displayName;
     cell.selectionStyle = UITableViewCellSelectionStyleDefault;
-    
-    [self setAvatarForSuggestion:suggestion forCell:cell indexPath:indexPath];
-    
+    cell.avatarImageView.image = [UIImage imageNamed:@"gravatar"];
+
+    [self loadAvatarForSuggestion:suggestion success:^(UIImage *image) {
+        if (indexPath.row >= self.searchResults.count) {
+            return;
+        }
+
+        Suggestion *reloaded = [self.searchResults objectAtIndex:indexPath.row];
+        if ([reloaded.imageURL isEqual:suggestion.imageURL] == false) {
+            return;
+        }
+
+        cell.avatarImageView.image = image;
+    }];
+
     return cell;
 }
 
@@ -293,7 +302,7 @@ CGFloat const STVSeparatorHeight = 1.f;
 
 - (NSArray *)suggestions
 {
-    if (!_suggestions) {
+    if (!_suggestions && _siteID != nil) {
         _suggestions = [[SuggestionService sharedInstance] suggestionsForSiteID:self.siteID];
     }
     return _suggestions;
@@ -301,23 +310,22 @@ CGFloat const STVSeparatorHeight = 1.f;
 
 #pragma mark - Avatar helper
 
-- (void)setAvatarForSuggestion:(Suggestion *)post forCell:(SuggestionsTableViewCell *)cell indexPath:(NSIndexPath *)indexPath
+- (void)loadAvatarForSuggestion:(Suggestion *)suggestion success:(void (^)(UIImage *))success
 {
     CGSize imageSize = CGSizeMake(SuggestionsTableViewCellAvatarSize, SuggestionsTableViewCellAvatarSize);
-    UIImage *image = [post cachedAvatarWithSize:imageSize];
+    UIImage *image = [suggestion cachedAvatarWithSize:imageSize];
     if (image) {
-        [cell.avatarImageView setImage:image];
-    } else {
-        [cell.avatarImageView setImage:[UIImage imageNamed:@"gravatar"]];
-        [post fetchAvatarWithSize:imageSize success:^(UIImage *image) {
-            if (!image) {
-                return;
-            }
-            if (cell == [self.tableView cellForRowAtIndexPath:indexPath]) {
-                [cell.avatarImageView setImage:image];
-            }
-        }];
+        success(image);
+        return;
     }
+
+    [suggestion fetchAvatarWithSize:imageSize success:^(UIImage *image) {
+        if (!image) {
+            return;
+        }
+
+        success(image);
+    }];
 }
 
 @end

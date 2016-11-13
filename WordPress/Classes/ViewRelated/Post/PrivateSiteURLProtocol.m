@@ -4,8 +4,18 @@
 #import "WPAccount.h"
 #import "Blog.h"
 
+@interface PrivateSiteURLProtocolSession: NSObject <NSURLSessionDelegate>
+
++ (instancetype) sharedInstance;
+- (NSURLSessionTask *)createSessionTaskForRequest:(NSURLRequest *)request forProtocol:(NSURLProtocol *)protocol;
+- (void)stopSessionTask:(NSURLSessionTask *)sessionTask;
+
+@end
+
 @interface PrivateSiteURLProtocol()
-@property (nonatomic, strong) NSURLConnection *connection;
+
+@property (nonatomic, strong) NSURLSessionTask *sessionTask;
+
 @end
 
 static NSInteger regcount = 0;
@@ -15,10 +25,13 @@ static NSString *cachedToken;
 @implementation PrivateSiteURLProtocol
 
 + (void)registerPrivateSiteURLProtocol
-{
+{    
     @synchronized(mutex) {
         if (regcount == 0) {
-            [NSURLProtocol registerClass:[self class]];
+            if (![NSURLProtocol registerClass:[self class]]) {
+                NSAssert(YES, @"Unable to register protocol");
+                DDLogInfo(@"Unable to register protocol");
+            }
         }
         regcount++;
     }
@@ -28,9 +41,13 @@ static NSString *cachedToken;
 {
     @synchronized(mutex) {
         cachedToken = nil;
-        regcount--;
-        if (regcount == 0) {
-            [NSURLProtocol unregisterClass:[self class]];
+        if (regcount > 0) {
+            regcount--;
+            if (regcount == 0) {
+                [NSURLProtocol unregisterClass:[self class]];
+            }
+        } else {
+            DDLogInfo(@"Detected unbalanced register/unregister private site protocol.");
         }
     }
 }
@@ -88,38 +105,131 @@ static NSString *cachedToken;
     return NO;
 }
 
++ (NSURLRequest *)requestForPrivateSiteFromURL:(NSURL *)url
+{
+    NSURLComponents *urlComponents = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:YES];
+    //make sure the scheme used is https
+    [urlComponents setScheme:@"https"];
+    NSURL *httpsURL = [urlComponents URL];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:httpsURL];
+    NSString *bearerToken = [NSString stringWithFormat:@"Bearer %@", [self bearerToken]];
+    [request addValue:bearerToken forHTTPHeaderField:@"Authorization"];
+    return request;
+}
+
 - (void)startLoading
 {
     NSMutableURLRequest *mRequest = [self.request mutableCopy];
     [mRequest addValue:[NSString stringWithFormat:@"Bearer %@", [[self class] bearerToken]] forHTTPHeaderField:@"Authorization"];
-    self.connection = [NSURLConnection connectionWithRequest:mRequest delegate:self];
+    self.sessionTask = [[PrivateSiteURLProtocolSession sharedInstance] createSessionTaskForRequest:mRequest forProtocol:self];
+
 }
 
 - (void)stopLoading
 {
-    [self.connection cancel];
+    [[PrivateSiteURLProtocolSession sharedInstance] stopSessionTask:self.sessionTask];
+    self.sessionTask = nil;
 }
 
-- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
+@end
+
+@interface PrivateSiteURLProtocolSession()
+
+@property (nonatomic, strong) NSMutableDictionary *taskToProtocolMapping;
+@property (nonatomic, strong) NSURLSession *session;
+
+@end
+
+@implementation PrivateSiteURLProtocolSession
+
++ (instancetype) sharedInstance
 {
-    [self.client URLProtocol:self didLoadData:data];
+    static id _sharedInstance = nil;
+    static dispatch_once_t _onceToken;
+    dispatch_once(&_onceToken, ^{
+        _sharedInstance = [[self alloc] init];
+    });
+
+    return _sharedInstance;
 }
 
-- (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error
+- (instancetype)init
 {
-    [self.client URLProtocol:self didFailWithError:error];
-    self.connection = nil;
+    self = [super init];
+    if (self) {
+        _taskToProtocolMapping = [NSMutableDictionary dictionary];
+    }
+    return self;
 }
 
-- (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response
+- (NSURLSession *)session
 {
-    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageAllowed];
+    if (_session == nil) {
+        NSURLSessionConfiguration *sessionConfiguration = [NSURLSessionConfiguration defaultSessionConfiguration];
+        _session = [NSURLSession sessionWithConfiguration:sessionConfiguration delegate:self delegateQueue:nil];
+    }
+    return _session;
 }
 
-- (void)connectionDidFinishLoading:(NSURLConnection *)connection
+- (NSURLSessionTask *)createSessionTaskForRequest:(NSURLRequest *)request forProtocol:(NSURLProtocol *)protocol
 {
-    [self.client URLProtocolDidFinishLoading:self];
-    self.connection = nil;
+    NSURLSessionTask *sessionTask = [self.session dataTaskWithRequest:request];
+    [sessionTask resume];
+
+    self.taskToProtocolMapping[sessionTask] = protocol;
+    return sessionTask;
+}
+
+- (void)stopSessionTask:(NSURLSessionTask *)sessionTask
+{
+    if (sessionTask == nil) {
+        return;
+    }
+    [self.taskToProtocolMapping removeObjectForKey:sessionTask];
+
+    [sessionTask cancel];
+}
+
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)dataTask
+    didReceiveData:(NSData *)data
+{
+    NSURLProtocol *protocol = self.taskToProtocolMapping[dataTask];
+    id<NSURLProtocolClient> client = protocol.client;
+
+    [client URLProtocol:protocol didLoadData:data];
+}
+
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error
+{
+    NSURLProtocol *protocol = self.taskToProtocolMapping[task];
+    id<NSURLProtocolClient> client = protocol.client;
+
+    if (error) {
+        [client URLProtocol:protocol didFailWithError:error];
+    } else {
+        [client URLProtocolDidFinishLoading:protocol];
+    }
+    [self.taskToProtocolMapping removeObjectForKey:task];
+}
+
+- (void)URLSession:(NSURLSession *)session didBecomeInvalidWithError:(NSError *)error
+{
+    if (session == _session) {
+        _session = nil;
+    }
+}
+
+- (void)URLSession:(NSURLSession *)session
+          dataTask:(NSURLSessionDataTask *)dataTask
+didReceiveResponse:(NSURLResponse *)response
+ completionHandler:(void (^)(NSURLSessionResponseDisposition disposition))completionHandler
+{
+    NSURLProtocol *protocol = self.taskToProtocolMapping[dataTask];
+    id<NSURLProtocolClient> client = protocol.client;
+
+    [client URLProtocol:protocol didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageAllowed];
+    completionHandler(NSURLSessionResponseAllow);
 }
 
 @end

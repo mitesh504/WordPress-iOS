@@ -1,20 +1,19 @@
 #import "RestorePostTableViewCell.h"
+#import "InteractivePostViewDelegate.h"
+#import "WordPress-Swift.h"
 #import "WPStyleGuide+Posts.h"
 
 @interface RestorePostTableViewCell()
 
-@property (nonatomic, strong) IBOutlet UIView *innerContentView;
-@property (nonatomic, strong) IBOutlet UIView *shadowView;
+@property (nonatomic, weak) id<InteractivePostViewDelegate> delegate;
 @property (nonatomic, strong) IBOutlet UIView *postContentView;
 @property (nonatomic, strong) IBOutlet UILabel *restoreLabel;
 @property (nonatomic, strong) IBOutlet UIButton *restoreButton;
-@property (nonatomic, weak) id<WPPostContentViewProvider> contentProvider;
+@property (nonatomic, strong) AbstractPost *post;
 
 @end
 
 @implementation RestorePostTableViewCell
-
-@synthesize delegate;
 
 #pragma mark - Life Cycle
 
@@ -34,15 +33,6 @@
     return [super hitTest:point withEvent:event];
 }
 
-#pragma mark - Accessors
-
-- (void)setBackgroundColor:(UIColor *)backgroundColor
-{
-    [super setBackgroundColor:backgroundColor];
-    self.innerContentView.backgroundColor = backgroundColor;
-}
-
-
 #pragma mark - Configuration
 
 - (void)applyStyles
@@ -50,7 +40,9 @@
     [WPStyleGuide applyPostCardStyle:self];
     [WPStyleGuide applyRestorePostLabelStyle:self.restoreLabel];
     [WPStyleGuide applyRestorePostButtonStyle:self.restoreButton];
-    self.shadowView.backgroundColor = [WPStyleGuide postCardBorderColor];
+
+    self.postContentView.layer.borderColor = [[WPStyleGuide postCardBorderColor] CGColor];
+    self.postContentView.layer.borderWidth = 1.0;
 }
 
 - (void)configureView
@@ -60,14 +52,18 @@
     [self.restoreButton setTitle:buttonTitle forState:UIControlStateNormal];
 }
 
-- (void)configureCell:(id<WPPostContentViewProvider>)contentProvider
+#pragma mark - ConfigurablePostView
+
+- (void)configureWithPost:(Post *)post
 {
-    self.contentProvider = contentProvider;
+    self.post = post;
 }
 
-- (void)configureCell:(id<WPPostContentViewProvider>)contentProvider layoutOnly:(BOOL)layoutOnly
+#pragma mark - InteractivePostView
+
+- (void)setInteractionDelegate:(id<InteractivePostViewDelegate>)delegate
 {
-    [self configureCell:contentProvider];
+    self.delegate = delegate;
 }
 
 
@@ -75,8 +71,8 @@
 
 - (IBAction)restorePostAction:(id)sender
 {
-    if ([self.delegate respondsToSelector:@selector(cell:receivedRestoreActionForProvider:)]) {
-        [self.delegate cell:self receivedRestoreActionForProvider:self.contentProvider];
+    if ([self.delegate respondsToSelector:@selector(cell:handleRestorePost:)]) {
+        [self.delegate cell:self handleRestorePost:self.post];
     }
 }
 

@@ -13,13 +13,10 @@
     return NO;
 }
 
-- (BOOL)isAlphaBuild
+- (BOOL)isRunningTestSuite
 {
-#if ALPHA_BUILD
-    return YES;
-#endif
-    
-    return NO;
+    Class testSuite = NSClassFromString(@"XCTestCase");
+    return testSuite != nil;
 }
 
 @end

@@ -2,6 +2,8 @@
 #import "Blog.h"
 #import "WordPressAppDelegate.h"
 
+extern NSString * const PostCategoryEntityName;
+extern NSString * const PostCategoryNameKey;
 extern const NSInteger PostCategoryUncategorized;
 
 @interface PostCategory : NSManagedObject
@@ -11,6 +13,8 @@ extern const NSInteger PostCategoryUncategorized;
 @property (nonatomic, strong) NSNumber *parentID;
 @property (nonatomic, strong) NSSet *posts;
 @property (nonatomic, strong) Blog *blog;
+
++ (NSString *)entityName;
 
 @end
 

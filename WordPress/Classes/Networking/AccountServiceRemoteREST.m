@@ -1,9 +1,9 @@
 #import "AccountServiceRemoteREST.h"
-#import "WordPressComApi.h"
 #import "RemoteBlog.h"
+#import "RemoteBlogOptionsHelper.h"
 #import "Constants.h"
 #import "WPAccount.h"
-#import "JetpackREST.h"
+#import "WordPress-Swift.h"
 
 static NSString * const UserDictionaryIDKey = @"ID";
 static NSString * const UserDictionaryUsernameKey = @"username";
@@ -11,6 +11,11 @@ static NSString * const UserDictionaryEmailKey = @"email";
 static NSString * const UserDictionaryDisplaynameKey = @"display_name";
 static NSString * const UserDictionaryPrimaryBlogKey = @"primary_blog";
 static NSString * const UserDictionaryAvatarURLKey = @"avatar_URL";
+static NSString * const UserDictionaryDateKey = @"date";
+
+@interface AccountServiceRemoteREST ()
+
+@end
 
 @implementation AccountServiceRemoteREST
 
@@ -18,15 +23,19 @@ static NSString * const UserDictionaryAvatarURLKey = @"avatar_URL";
                     failure:(void (^)(NSError *))failure
 {
     NSString *requestUrl = [self pathForEndpoint:@"me/sites"
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
-    
-    [self.api GET:requestUrl
-       parameters:nil
-          success:^(AFHTTPRequestOperation *operation, id responseObject) {
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
+
+    NSString *locale = [[WordPressComLanguageDatabase new] deviceLanguageSlug];
+    NSDictionary *parameters = @{
+                                 @"locale": locale
+                                 };
+    [self.wordPressComRestApi GET:requestUrl
+       parameters:parameters
+                    success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
               if (success) {
                   success([self remoteBlogsFromJSONArray:responseObject[@"sites"]]);
               }
-          } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
               if (failure) {
                   failure(error);
               }
@@ -44,18 +53,18 @@ static NSString * const UserDictionaryAvatarURLKey = @"avatar_URL";
     NSParameterAssert([account isKindOfClass:[WPAccount class]]);
     
     NSString *requestUrl = [self pathForEndpoint:@"me"
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
        parameters:nil
-          success:^(AFHTTPRequestOperation *operation, NSDictionary *responseObject) {
+          success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
               if (!success) {
                   return;
               }
               RemoteUser *remoteUser = [self remoteUserFromDictionary:responseObject];
               success(remoteUser);
           }
-          failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
               if (failure) {
                   failure(error);
               }
@@ -94,22 +103,77 @@ static NSString * const UserDictionaryAvatarURLKey = @"avatar_URL";
     }];
 
     NSDictionary *parameters = @{
-                                 @"sites": sites,
+                                 @"sites": sites
                                  };
     NSString *path = [self pathForEndpoint:@"me/sites"
-                               withVersion:ServiceRemoteRESTApiVersion_1_1];
-    [self.api POST:path
+                               withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
+    [self.wordPressComRestApi POST:path
         parameters:parameters
-           success:^(AFHTTPRequestOperation *operation, id responseObject) {
+           success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
                if (success) {
                    success();
                }
-           } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+           } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
                if (failure) {
                    failure(error);
                }
            }];
 }
+
+- (void)isEmailAvailable:(NSString *)email success:(void (^)(BOOL available))success failure:(void (^)(NSError *error))failure
+{
+    NSString *path = @"https://public-api.wordpress.com/is-available/email";
+    [self.wordPressComRestApi GET:path
+       parameters:@{ @"q": email, @"format": @"json"}
+          success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
+              if (!success) {
+                  return;
+              }
+
+              // If the email address is not available (has already been used)
+              // the endpoint will reply with a 200 status code and an JSON
+              // object describing an error.
+              // The error is that the queried email address is not available,
+              // which is our failure case. Test the error response for the
+              // "taken" reason to confirm the email address exists.
+              BOOL available = NO;
+              if ([responseObject isKindOfClass:[NSDictionary class]]) {
+                  NSDictionary *dict = (NSDictionary *)responseObject;
+                  available = [[dict numberForKey:@"available"] boolValue];
+              }
+              success(available);
+
+          } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
+              if (failure) {
+                  failure(error);
+              }
+          }];
+}
+
+- (void)requestWPComAuthLinkForEmail:(NSString *)email success:(void (^)())success failure:(void (^)(NSError *error))failure
+{
+    NSAssert([email length] > 0, @"Needs an email address.");
+
+    NSString *path = [self pathForEndpoint:@"auth/send-login-email"
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
+
+    [self.wordPressComRestApi POST:path
+        parameters:@{
+                     @"email": email,
+                     @"client_id": [ApiCredentials client],
+                     @"client_secret": [ApiCredentials secret],
+                     }
+           success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
+               if (success) {
+                   success();
+               }
+           } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
+               if (failure) {
+                   failure(error);
+               }
+           }];
+}
+
 
 #pragma mark - Private Methods
 
@@ -122,36 +186,17 @@ static NSString * const UserDictionaryAvatarURLKey = @"avatar_URL";
     remoteUser.displayName = [dictionary stringForKey:UserDictionaryDisplaynameKey];
     remoteUser.primaryBlogID = [dictionary numberForKey:UserDictionaryPrimaryBlogKey];
     remoteUser.avatarURL = [dictionary stringForKey:UserDictionaryAvatarURLKey];
+    remoteUser.dateCreated = [NSDate dateWithISO8601String:[dictionary stringForKey:UserDictionaryDateKey]];
+    
     return remoteUser;
 }
 
 - (NSArray *)remoteBlogsFromJSONArray:(NSArray *)jsonBlogs
 {
     NSArray *blogs = jsonBlogs;
-    if (!JetpackREST.enabled) {
-        blogs = [blogs wp_filter:^BOOL(NSDictionary *jsonBlog) {
-            BOOL isJetpack = [jsonBlog[@"jetpack"] boolValue];
-            return !isJetpack;
-        }];
-    }
     return [blogs wp_map:^id(NSDictionary *jsonBlog) {
-        return [self remoteBlogFromJSONDictionary:jsonBlog];
+        return [[RemoteBlog alloc] initWithJSONDictionary:jsonBlog];
     }];
-}
-
-- (RemoteBlog *)remoteBlogFromJSONDictionary:(NSDictionary *)jsonBlog
-{
-    RemoteBlog *blog = [RemoteBlog new];
-    blog.blogID =  [jsonBlog numberForKey:@"ID"];
-    blog.name = [jsonBlog stringForKey:@"name"];
-    blog.tagline = [jsonBlog stringForKey:@"description"];
-    blog.url = [jsonBlog stringForKey:@"URL"];
-    blog.xmlrpc = [jsonBlog stringForKeyPath:@"meta.links.xmlrpc"];
-    blog.jetpack = [[jsonBlog numberForKey:@"jetpack"] boolValue];
-    blog.icon = [jsonBlog stringForKeyPath:@"icon.img"];
-    blog.isAdmin = [[jsonBlog numberForKeyPath:@"capabilities.manage_options"] boolValue];
-    blog.visible = [[jsonBlog numberForKey:@"visible"] boolValue];
-    return blog;
 }
 
 @end

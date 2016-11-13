@@ -6,11 +6,10 @@
 ///----------------------------------------------
 ///@name Persistent Contexts
 ///
-/// The mainContext has concurrency type
-/// NSMainQueueConcurrencyType and should be used
+/// The mainContext has concurrency type NSMainQueueConcurrencyType and should be used
 /// for UI elements and fetched results controllers.
-/// During Simperium startup, a backgroundWriterContext
-/// will be created.
+/// Internally, we'll use a privateQueued context to perform disk write Operations.
+///
 ///----------------------------------------------
 @property (nonatomic, readonly, strong) NSManagedObjectContext *mainContext;
 
@@ -45,6 +44,18 @@
  with the parent context as the main context
 */
 - (NSManagedObjectContext *const)newDerivedContext;
+
+/**
+ For usage as a snapshot of the main context. This is useful when operations 
+ should happen on the main queue (fetches) but not immedately reflect changes to
+ the main context.
+
+ Make sure to save using saveContext:
+
+ @return a new MOC with NSMainQueueConcurrencyType,
+ with the parent context as the main context
+ */
+- (NSManagedObjectContext *const)newMainContextChildContext;
 
 /**
  Save a derived context created with `newDerivedContext` via this convenience method
@@ -85,7 +96,7 @@
 - (void)saveContext:(NSManagedObjectContext *)context withCompletionBlock:(void (^)())completionBlock;
 
 /**
- Get a peranent NSManagedObjectID for the specified NSManagedObject
+ Get a permanent NSManagedObjectID for the specified NSManagedObject
  
  @param managedObject A managedObject with a temporary NSManagedObjectID
  @return YES if the permanentID was successfully obtained, or NO if it failed.

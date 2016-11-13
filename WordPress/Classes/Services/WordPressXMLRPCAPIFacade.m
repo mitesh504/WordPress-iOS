@@ -1,11 +1,10 @@
 #import "WordPressXMLRPCAPIFacade.h"
 #import <WPXMLRPC/WPXMLRPC.h>
-#import <WordPressApi/WordPressXMLRPCApi.h>
+#import "WordPress-Swift.h"
 
 
 @interface WordPressXMLRPCAPIFacade ()
 
-@property (nonatomic, strong) WordPressXMLRPCApi *xmlRPCApi;
 
 @end
 
@@ -16,25 +15,30 @@
                       success:(void (^)(NSURL *xmlrpcURL))success
                       failure:(void (^)(NSError *error))failure
 {
-    [WordPressXMLRPCApi guessXMLRPCURLForSite:url success:success failure:^(NSError *error) {
-        failure([self errorForGuessXMLRPCApiFailure:error]);
+    WordPressOrgXMLRPCValidator *validator = [[WordPressOrgXMLRPCValidator alloc] init];
+    [validator guessXMLRPCURLForSite:url success:success failure:^(NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            failure([self errorForGuessXMLRPCApiFailure:error]);
+        });
     }];
 }
 
 - (NSError *)errorForGuessXMLRPCApiFailure:(NSError *)error
 {
-    if ([error.domain isEqual:NSURLErrorDomain] && error.code == NSURLErrorUserCancelledAuthentication) {
-        return nil;
-    } else if ([error.domain isEqual:WPXMLRPCErrorDomain] && error.code == WPXMLRPCInvalidInputError) {
+    DDLogError(@"Error on trying to guess XMLRPC site: %@", error);
+    NSArray *errorCodes = @[
+                            @(NSURLErrorUserCancelledAuthentication),
+                            @(NSURLErrorNotConnectedToInternet),
+                            @(NSURLErrorNetworkConnectionLost),
+                            ];
+    if ([error.domain isEqual:NSURLErrorDomain] && [errorCodes containsObject:@(error.code)]) {
         return error;
-    } else if ([error.domain isEqual:AFURLRequestSerializationErrorDomain] || [error.domain isEqual:AFURLResponseSerializationErrorDomain]) {
-        NSString *str = [NSString stringWithFormat:NSLocalizedString(@"There was a server error communicating with your site:\n%@\nTap 'Need Help?' to view the FAQ.", nil), [error localizedDescription]];
-        NSDictionary *userInfo = @{NSLocalizedDescriptionKey: str};
-        NSError *err = [NSError errorWithDomain:@"org.wordpress.iphone" code:NSURLErrorBadServerResponse userInfo:userInfo];
-        return err;
     } else {
-        NSDictionary *userInfo = @{NSLocalizedDescriptionKey: NSLocalizedString(@"Unable to find a WordPress site at that URL. Tap 'Need Help?' to view the FAQ.", nil)};
-        NSError *err = [NSError errorWithDomain:@"org.wordpress.iphone" code:NSURLErrorBadURL userInfo:userInfo];
+        NSDictionary *userInfo = @{
+                                   NSLocalizedDescriptionKey: NSLocalizedString(@"Unable to read the WordPress site at that URL. Tap 'Need Help?' to view the FAQ.", nil),
+                                   NSLocalizedFailureReasonErrorKey: error.localizedDescription
+                                   };
+        NSError *err = [NSError errorWithDomain:WordPressAppErrorDomain code:NSURLErrorBadURL userInfo:userInfo];
         return err;
     }
 }
@@ -46,8 +50,21 @@
                           failure:(void (^)(NSError *error))failure;
 {
     
-    WordPressXMLRPCApi *api = [WordPressXMLRPCApi apiWithXMLRPCEndpoint:xmlrpc username:username password:password];
-    return [api getBlogOptionsWithSuccess:success failure:failure];
+    WordPressOrgXMLRPCApi *api = [[WordPressOrgXMLRPCApi alloc] initWithEndpoint:xmlrpc userAgent:[WPUserAgent wordPressUserAgent]];
+    [api checkCredentials:username password:password success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (success) {
+                success(responseObject);
+            }
+        });
+
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (failure) {
+                failure(error);
+            }
+        });
+    }];
 }
 
 

@@ -1,6 +1,6 @@
 #import "PageSettingsViewController.h"
 #import "PostSettingsViewController_Internal.h"
-#import "Page.h"
+#import "WordPress-Swift.h"
 
 @interface PageSettingsViewController ()
 
@@ -24,9 +24,7 @@
 
 - (void)configureSections
 {
-    self.sections = [NSMutableArray array];
-    [self.sections addObject:[NSNumber numberWithInteger:PostSettingsSectionMeta]];
-    [self.sections addObject:[NSNumber numberWithInteger:PostSettingsSectionFeaturedImage]];    
+    self.sections = @[@(PostSettingsSectionMeta),@(PostSettingsSectionFeaturedImage)];
 }
 
 - (Page *)page

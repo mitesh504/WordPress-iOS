@@ -12,9 +12,7 @@
     NSParameterAssert(timeZone != nil);
     NSParameterAssert(oauth2Token.length > 0);
     
-    if (!WIDGETS_EXIST) {
-        return;
-    }
+    [[NCWidgetController widgetController] setHasContent:YES forWidgetWithBundleIdentifier:@"org.wordpress.WordPressTodayWidget"];
     
     // Save the token and site ID to shared user defaults for use in the today widget
     NSUserDefaults *sharedDefaults = [[NSUserDefaults alloc] initWithSuiteName:WPAppGroupName];
@@ -24,62 +22,39 @@
     [sharedDefaults synchronize];
     
     NSError *error;
-    [SFHFKeychainUtils storeUsername:WPStatsTodayWidgetOAuth2TokenKeychainUsername
+    [SFHFKeychainUtils storeUsername:WPStatsTodayWidgetKeychainTokenKey
                          andPassword:oauth2Token
-                      forServiceName:WPStatsTodayWidgetOAuth2TokenKeychainServiceName
-                         accessGroup:WPStatsTodayWidgetOAuth2TokenKeychainAccessGroup
+                      forServiceName:WPStatsTodayWidgetKeychainServiceName
+                         accessGroup:WPAppKeychainAccessGroup
                       updateExisting:YES
                                error:&error];
     if (error) {
         DDLogError(@"Today Widget OAuth2Token error: %@", error);
-    } else {
-        // Turns the widget on for this site
-        [[NCWidgetController widgetController] setHasContent:YES forWidgetWithBundleIdentifier:@"org.wordpress.WordPressTodayWidget"];
     }
 }
 
 - (void)removeTodayWidgetConfiguration
 {
-    if (!WIDGETS_EXIST) {
-        return;
-    }
-    
     NSUserDefaults *sharedDefaults = [[NSUserDefaults alloc] initWithSuiteName:WPAppGroupName];
+
     [sharedDefaults removeObjectForKey:WPStatsTodayWidgetUserDefaultsSiteTimeZoneKey];
     [sharedDefaults removeObjectForKey:WPStatsTodayWidgetUserDefaultsSiteIdKey];
     [sharedDefaults removeObjectForKey:WPStatsTodayWidgetUserDefaultsSiteNameKey];
     [sharedDefaults synchronize];
     
-    [SFHFKeychainUtils deleteItemForUsername:WPStatsTodayWidgetOAuth2TokenKeychainUsername
-                              andServiceName:WPStatsTodayWidgetOAuth2TokenKeychainServiceName
-                                 accessGroup:WPStatsTodayWidgetOAuth2TokenKeychainAccessGroup
+    [SFHFKeychainUtils deleteItemForUsername:WPStatsTodayWidgetKeychainTokenKey
+                              andServiceName:WPStatsTodayWidgetKeychainServiceName
+                                 accessGroup:WPAppKeychainAccessGroup
                                        error:nil];
-    
-    // Turns the widget off for this site
-    [[NCWidgetController widgetController] setHasContent:NO forWidgetWithBundleIdentifier:@"org.wordpress.WordPressTodayWidget"];
-}
-
-- (void)hideTodayWidgetIfNotConfigured
-{
-    if (!WIDGETS_EXIST) {
-        return;
-    }
-    
-    BOOL widgetIsConfigured = [self widgetIsConfigured];
-    if (!widgetIsConfigured) {
-        [[NCWidgetController widgetController] setHasContent:NO forWidgetWithBundleIdentifier:@"org.wordpress.WordPressTodayWidget"];
-    } else {
-        [[NCWidgetController widgetController] setHasContent:YES forWidgetWithBundleIdentifier:@"org.wordpress.WordPressTodayWidget"];
-    }
 }
 
 - (BOOL)widgetIsConfigured
 {
     NSUserDefaults *sharedDefaults = [[NSUserDefaults alloc] initWithSuiteName:WPAppGroupName];
     NSString *siteId = [sharedDefaults stringForKey:WPStatsTodayWidgetUserDefaultsSiteIdKey];
-    NSString *oauth2Token = [SFHFKeychainUtils getPasswordForUsername:WPStatsTodayWidgetOAuth2TokenKeychainUsername
-                                                       andServiceName:WPStatsTodayWidgetOAuth2TokenKeychainServiceName
-                                                          accessGroup:WPStatsTodayWidgetOAuth2TokenKeychainAccessGroup
+    NSString *oauth2Token = [SFHFKeychainUtils getPasswordForUsername:WPStatsTodayWidgetKeychainTokenKey
+                                                       andServiceName:WPStatsTodayWidgetKeychainServiceName
+                                                          accessGroup:WPAppKeychainAccessGroup
                                                                 error:nil];
     
     if (siteId.length == 0 || oauth2Token.length == 0) {

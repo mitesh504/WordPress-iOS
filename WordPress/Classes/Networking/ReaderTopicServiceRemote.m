@@ -1,7 +1,6 @@
 #import "ReaderTopicServiceRemote.h"
 #import "RemoteReaderTopic.h"
 #import "RemoteReaderSiteInfo.h"
-#import "WordPressComApi.h"
 #import "WordPress-Swift.h"
 
 static NSString * const TopicMenuSectionDefaultKey = @"default";
@@ -14,11 +13,14 @@ static NSString * const TopicDictionaryOwnerKey = @"owner";
 static NSString * const TopicDictionarySlugKey = @"slug";
 static NSString * const TopicDictionaryTagKey = @"tag";
 static NSString * const TopicDictionaryTitleKey = @"title";
+static NSString * const TopicDictionaryTypeKey = @"type";
+static NSString * const TopicDictionaryDisplayNameKey = @"display_name";
 static NSString * const TopicDictionaryURLKey = @"URL";
 static NSString * const TopicNotFoundMarker = @"-notfound-";
 
 // Site Topic Keys
 static NSString * const SiteDictionaryFeedIDKey = @"feed_ID";
+static NSString * const SiteDictionaryFeedURLKey = @"feed_URL";
 static NSString * const SiteDictionaryFollowingKey = @"is_following";
 static NSString * const SiteDictionaryJetpackKey = @"is_jetpack";
 static NSString * const SiteDictionaryPrivateKey = @"is_private";
@@ -38,9 +40,9 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
 {
     NSString *path = @"read/menu";
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_2];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_2];
 
-    [self.api GET:requestUrl parameters:nil success:^(AFHTTPRequestOperation *operation, NSDictionary *response) {
+    [self.wordPressComRestApi GET:requestUrl parameters:nil success:^(NSDictionary *response, NSHTTPURLResponse *httpResponse) {
         if (!success) {
             return;
         }
@@ -73,7 +75,33 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
 
         success(topics);
 
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
+        if (failure) {
+            failure(error);
+        }
+    }];
+}
+
+- (void)fetchFollowedSitesWithSuccess:(void(^)(NSArray *sites))success failure:(void(^)(NSError *error))failure
+{
+    NSString *path = @"read/following/mine?meta=site,feed";
+    NSString *requestUrl = [self pathForEndpoint:path
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
+
+    [self.wordPressComRestApi GET:requestUrl parameters:nil success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
+        if (!success) {
+            return;
+        }
+        NSDictionary *response = (NSDictionary *)responseObject;
+        NSArray *subscriptions = [response arrayForKey:@"subscriptions"];
+        NSMutableArray *sites = [NSMutableArray array];
+        for (NSDictionary *dict in subscriptions) {
+            RemoteReaderSiteInfo *siteInfo = [self siteInfoFromFollowedSiteDictionary:dict];
+            [sites addObject:siteInfo];
+        }
+        success(sites);
+
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
         if (failure) {
             failure(error);
         }
@@ -86,16 +114,16 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
 {
     NSString *path = [NSString stringWithFormat:@"read/tags/%@/mine/delete", slug];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
 
-    [self.api POST:requestUrl parameters:nil success:^(AFHTTPRequestOperation *operation, NSDictionary *responseObject) {
+    [self.wordPressComRestApi POST:requestUrl parameters:nil success:^(NSDictionary *responseObject, NSHTTPURLResponse *httpResponse) {
         if (!success) {
             return;
         }
         NSNumber *unfollowedTag = [responseObject numberForKey:TopicRemovedTagKey];
         success(unfollowedTag);
 
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
         if (failure) {
             failure(error);
         }
@@ -106,8 +134,7 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
              withSuccess:(void (^)(NSNumber *topicID))success
                  failure:(void (^)(NSError *error))failure
 {
-    NSString *slug = [self slugForTopicName:topicName];
-    [self followTopicWithSlug:slug withSuccess:success failure:failure];
+    [self followTopicWithSlug:topicName withSuccess:success failure:failure];
 }
 
 - (void)followTopicWithSlug:(NSString *)slug
@@ -115,17 +142,18 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
                  failure:(void (^)(NSError *error))failure
 {
     NSString *path = [NSString stringWithFormat:@"read/tags/%@/mine/new", slug];
+    path = [path stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
 
-    [self.api POST:requestUrl parameters:nil success:^(AFHTTPRequestOperation *operation, id responseObject) {
+    [self.wordPressComRestApi POST:requestUrl parameters:nil success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
         if (!success) {
             return;
         }
         NSNumber *followedTag = [responseObject numberForKey:TopicAddedTagKey];
         success(followedTag);
 
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
         if (failure) {
             failure(error);
         }
@@ -138,9 +166,9 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
 {
     NSString *path = [NSString stringWithFormat:@"read/tags/%@", slug];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_2];
 
-    [self.api GET:requestUrl parameters:nil success:^(AFHTTPRequestOperation *operation, id responseObject) {
+    [self.wordPressComRestApi GET:requestUrl parameters:nil success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
         if (!success) {
             return;
         }
@@ -151,7 +179,7 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
         remoteTopic.isMenuItem = NO;
         success(remoteTopic);
 
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
         if (failure) {
             failure(error);
         }
@@ -167,14 +195,14 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
     if (isFeed) {
         NSString *path = [NSString stringWithFormat:@"read/feed/%@", siteID];
         requestUrl = [self pathForEndpoint:path
-                               withVersion:ServiceRemoteRESTApiVersion_1_1];
+                               withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     } else {
         NSString *path = [NSString stringWithFormat:@"read/sites/%@", siteID];
         requestUrl = [self pathForEndpoint:path
-                               withVersion:ServiceRemoteRESTApiVersion_1_2];
+                               withVersion:ServiceRemoteWordPressComRESTApiVersion_1_2];
     }
     
-    [self.api GET:requestUrl parameters:nil success:^(AFHTTPRequestOperation *operation, id responseObject) {
+    [self.wordPressComRestApi GET:requestUrl parameters:nil success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
         if (!success) {
             return;
         }
@@ -188,17 +216,29 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
         }
         success(siteInfo);
 
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
         if (failure) {
             failure(error);
         }
     }];
 }
 
+- (RemoteReaderSiteInfo *)siteInfoFromFollowedSiteDictionary:(NSDictionary *)dict
+{
+    NSDictionary *meta = [dict dictionaryForKeyPath:@"meta.data.site"];
+    if (meta) {
+        return [self siteInfoForSiteResponse:meta];
+    } else {
+        meta = [dict dictionaryForKeyPath:@"meta.data.feed"];
+        return [self siteInfoForFeedResponse:meta];
+    }
+}
+
 - (RemoteReaderSiteInfo *)siteInfoForSiteResponse:(NSDictionary *)response
 {
     RemoteReaderSiteInfo *siteInfo = [RemoteReaderSiteInfo new];
     siteInfo.feedID = [response numberForKey:SiteDictionaryFeedIDKey];
+    siteInfo.feedURL = [response stringForKey:SiteDictionaryFeedURLKey];
     siteInfo.isFollowing = [[response numberForKey:SiteDictionaryFollowingKey] boolValue];
     siteInfo.isJetpack = [[response numberForKey:SiteDictionaryJetpackKey] boolValue];
     siteInfo.isPrivate = [[response numberForKey:SiteDictionaryPrivateKey] boolValue];
@@ -213,6 +253,8 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
     if (![siteInfo.siteName length] && [siteInfo.siteURL length] > 0) {
         siteInfo.siteName = [[NSURL URLWithString:siteInfo.siteURL] host];
     }
+    NSString *endpointPath = [NSString stringWithFormat:@"read/sites/%@/posts/", siteInfo.siteID];
+    siteInfo.postsEndpoint = [self endpointUrlForPath:endpointPath];
     return siteInfo;
 }
 
@@ -220,6 +262,7 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
 {
     RemoteReaderSiteInfo *siteInfo = [RemoteReaderSiteInfo new];
     siteInfo.feedID = [response numberForKey:SiteDictionaryFeedIDKey];
+    siteInfo.feedURL = [response stringForKey:SiteDictionaryFeedURLKey];
     siteInfo.isFollowing = [[response numberForKey:SiteDictionaryFollowingKey] boolValue];
     siteInfo.isJetpack = NO;
     siteInfo.isPrivate = NO;
@@ -234,7 +277,16 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
     if (![siteInfo.siteName length] && [siteInfo.siteURL length] > 0) {
         siteInfo.siteName = [[NSURL URLWithString:siteInfo.siteURL] host];
     }
+    NSString *endpointPath = [NSString stringWithFormat:@"read/feed/%@/posts/", siteInfo.feedID];
+    siteInfo.postsEndpoint = [self endpointUrlForPath:endpointPath];
     return siteInfo;
+}
+
+- (NSString *)endpointUrlForPath:(NSString *)endpoint
+{
+    NSString *absolutePath = [self pathForEndpoint:endpoint withVersion:ServiceRemoteWordPressComRESTApiVersion_1_2];
+    NSURL *url = [NSURL URLWithString:absolutePath relativeToURL:[NSURL URLWithString:WordPressComRestApi.apiBaseURLString]];
+    return [url absoluteString];
 }
 
 
@@ -336,7 +388,8 @@ static NSString * const SiteDictionarySubscriptionsKey = @"subscribers_count";
     topic.owner = [topicDict stringForKey:TopicDictionaryOwnerKey];
     topic.path = [[topicDict stringForKey:TopicDictionaryURLKey] lowercaseString];
     topic.slug = [topicDict stringForKey:TopicDictionarySlugKey];
-    topic.title = [topicDict stringForKey:TopicDictionaryTitleKey];
+    topic.title = [topicDict stringForKey:TopicDictionaryDisplayNameKey] ?: [topicDict stringForKey:TopicDictionaryTitleKey];
+    topic.type = [topicDict stringForKey:TopicDictionaryTypeKey];
 
     return topic;
 }

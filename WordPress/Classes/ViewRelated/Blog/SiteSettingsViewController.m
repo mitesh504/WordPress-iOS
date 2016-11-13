@@ -1,31 +1,24 @@
 #import "SiteSettingsViewController.h"
-#import "NSURL+IDN.h"
-#import "SupportViewController.h"
-#import "WPWebViewController.h"
-#import "ReachabilityUtils.h"
-#import "WPAccount.h"
+
 #import "Blog.h"
-#import "WPTableViewSectionHeaderFooterView.h"
-#import "SettingTableViewCell.h"
-#import "NotificationsManager.h"
-#import <SVProgressHUD/SVProgressHUD.h>
-#import "NotificationsManager.h"
-#import "AccountService.h"
-#import "ContextManager.h"
-#import <WPXMLRPC/WPXMLRPC.h>
 #import "BlogService.h"
-#import "WPTextFieldTableViewCell.h"
-#import "SettingsTextViewController.h"
-#import "SettingsMultiTextViewController.h"
-#import "WPGUIConstants.h"
-#import "PostCategoryService.h"
-#import "PostCategory.h"
-#import "PostCategoriesViewController.h"
-#import "SettingsSelectionViewController.h"
 #import "BlogSiteVisibilityHelper.h"
+#import "ContextManager.h"
+#import "NSURL+IDN.h"
+#import "PostCategory.h"
+#import "PostCategoryService.h"
+#import "PostCategoriesViewController.h"
 #import "RelatedPostsSettingsViewController.h"
+#import "SettingsSelectionViewController.h"
+#import "SettingsMultiTextViewController.h"
+#import "SettingTableViewCell.h"
+#import "SettingsTextViewController.h"
 #import "WordPress-Swift.h"
-#import <WordPressApi/WordPressApi.h>
+#import "WPWebViewController.h"
+#import "WordPress-Swift.h"
+#import "BlogServiceRemoteXMLRPC.h"
+#import <SVProgressHUD/SVProgressHUD.h>
+#import <WPXMLRPC/WPXMLRPC.h>
 
 
 NS_ENUM(NSInteger, SiteSettingsGeneral) {
@@ -33,6 +26,7 @@ NS_ENUM(NSInteger, SiteSettingsGeneral) {
     SiteSettingsGeneralTagline,
     SiteSettingsGeneralURL,
     SiteSettingsGeneralPrivacy,
+    SiteSettingsGeneralLanguage,
     SiteSettingsGeneralCount,
 };
 
@@ -43,11 +37,17 @@ NS_ENUM(NSInteger, SiteSettingsAccount) {
 };
 
 NS_ENUM(NSInteger, SiteSettingsWriting) {
-    SiteSettingsWritingGeotagging = 0,
-    SiteSettingsWritingDefaultCategory,
+    SiteSettingsWritingDefaultCategory = 0,
     SiteSettingsWritingDefaultPostFormat,
     SiteSettingsWritingRelatedPosts,
     SiteSettingsWritingCount,
+};
+
+NS_ENUM(NSInteger, SiteSettingsAdvanced) {
+    SiteSettingsAdvancedStartOver = 0,
+    SiteSettingsAdvancedExportContent,
+    SiteSettingsAdvancedDeleteSite,
+    SiteSettingsAdvancedCount,
 };
 
 NS_ENUM(NSInteger, SiteSettingsSection) {
@@ -56,39 +56,47 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     SiteSettingsSectionWriting,
     SiteSettingsSectionDiscussion,
     SiteSettingsSectionRemoveSite,
+    SiteSettingsSectionAdvanced,
 };
 
 
 @interface SiteSettingsViewController () <UITableViewDelegate, UITextFieldDelegate, PostCategoriesViewControllerDelegate>
 
-@property (nonatomic, strong) NSArray *tableSections;
 #pragma mark - General Section
 @property (nonatomic, strong) SettingTableViewCell *siteTitleCell;
 @property (nonatomic, strong) SettingTableViewCell *siteTaglineCell;
 @property (nonatomic, strong) SettingTableViewCell *addressTextCell;
 @property (nonatomic, strong) SettingTableViewCell *privacyTextCell;
+@property (nonatomic, strong) SettingTableViewCell *languageTextCell;
 #pragma mark - Account Section
 @property (nonatomic, strong) SettingTableViewCell *usernameTextCell;
 @property (nonatomic, strong) SettingTableViewCell *passwordTextCell;
 #pragma mark - Writing Section
-@property (nonatomic, strong) SwitchTableViewCell *geotaggingCell;
 @property (nonatomic, strong) SettingTableViewCell *defaultCategoryCell;
 @property (nonatomic, strong) SettingTableViewCell *defaultPostFormatCell;
 @property (nonatomic, strong) SettingTableViewCell *relatedPostsCell;
-#pragma mark - Discussion
+#pragma mark - Discussion Section
 @property (nonatomic, strong) SettingTableViewCell *discussionSettingsCell;
+#pragma mark - Device Section
+@property (nonatomic, strong) SwitchTableViewCell *geotaggingCell;
 #pragma mark - Removal Section
 @property (nonatomic, strong) UITableViewCell *removeSiteCell;
+#pragma mark - Advanced Section
+@property (nonatomic, strong) SettingTableViewCell *startOverCell;
+@property (nonatomic, strong) WPTableViewCell *exportContentCell;
+@property (nonatomic, strong) WPTableViewCell *deleteSiteCell;
 
 @property (nonatomic, strong) Blog *blog;
-@property (nonatomic, strong) NSString *url;
-@property (nonatomic, strong) NSString *authToken;
 @property (nonatomic, strong) NSString *username;
 @property (nonatomic, strong) NSString *password;
-@property (nonatomic, assign) BOOL geolocationEnabled;
 @end
 
 @implementation SiteSettingsViewController
+
+- (void)dealloc
+{
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 
 - (instancetype)initWithBlog:(Blog *)blog
 {
@@ -97,13 +105,10 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     self = [super initWithStyle:UITableViewStyleGrouped];
     if (self) {
         _blog = blog;
+        _username = blog.usernameForSite;
+        _password = blog.password;
     }
     return self;
-}
-
-- (void)dealloc
-{
-    self.delegate = nil;
 }
 
 - (void)viewDidLoad
@@ -111,51 +116,58 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     DDLogMethod();
     [super viewDidLoad];
     self.navigationItem.title = NSLocalizedString(@"Settings", @"Title for screen that allows configuration of your blog/site settings.");
-    
-    NSMutableArray *sections = [NSMutableArray arrayWithObjects:@(SiteSettingsSectionGeneral), nil];
-    
-    if (!self.blog.account) {
-        [sections addObject:@(SiteSettingsSectionAccount)];
-    }
-    
-    [sections addObject:@(SiteSettingsSectionWriting)];
-    
-    if ([self.blog supports:BlogFeatureWPComRESTAPI]) {
-        [sections addObject:@(SiteSettingsSectionDiscussion)];
-    }
-    
-    if ([self.blog supports:BlogFeatureRemovable]) {
-        [sections addObject:@(SiteSettingsSectionRemoveSite)];
-    }
 
-    self.tableSections = sections;
-    
-    [WPStyleGuide resetReadableMarginsForTableView:self.tableView];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleDataModelChange:)
+                                                 name:NSManagedObjectContextObjectsDidChangeNotification
+                                               object:self.blog.managedObjectContext];
+
     [WPStyleGuide configureColorsForView:self.view andTableView:self.tableView];
     
     self.refreshControl = [[UIRefreshControl alloc] init];
     [self.refreshControl addTarget:self action:@selector(refreshTriggered:) forControlEvents:UIControlEventValueChanged];
-    
-    self.url = self.blog.url;
-    self.authToken = self.blog.authToken;
-    self.username = self.blog.usernameForSite;
-    self.password = self.blog.password;
-    self.geolocationEnabled = self.blog.settings.geolocationEnabled;
-    
-    [self refreshData];
-}
 
-- (void)viewWillAppear:(BOOL)animated
-{
-    [self.tableView deselectRowAtIndexPath:[self.tableView indexPathForSelectedRow] animated:animated];
-    [super viewWillAppear:animated];
+    if (self.presentingViewController) {
+        self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone target:self action:@selector(dismiss)];
+    }
+
+    [self refreshData];
 }
 
 - (void)viewDidAppear:(BOOL)animated
 {
-    [self.tableView reloadData];
     [super viewDidAppear:animated];
+
+    [self.tableView reloadData];
 }
+
+- (NSArray *)tableSections
+{
+    NSMutableArray *sections = [NSMutableArray arrayWithObjects:@(SiteSettingsSectionGeneral), nil];
+
+    if (!self.blog.account) {
+        [sections addObject:@(SiteSettingsSectionAccount)];
+    }
+
+    if ([self.blog supports:BlogFeatureWPComRESTAPI] && self.blog.isAdmin) {
+        [sections addObject:@(SiteSettingsSectionWriting)];
+    }
+
+    if ([self.blog supports:BlogFeatureWPComRESTAPI]) {
+        [sections addObject:@(SiteSettingsSectionDiscussion)];
+    }
+
+    if ([self.blog supports:BlogFeatureRemovable]) {
+        [sections addObject:@(SiteSettingsSectionRemoveSite)];
+    }
+
+    if ([self.blog supports:BlogFeatureSiteManagement]) {
+        [sections addObject:@(SiteSettingsSectionAdvanced)];
+    }
+
+    return sections;
+}
+
 
 #pragma mark - UITableViewDataSource
 
@@ -166,40 +178,46 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-    NSInteger settingsSection = [self.tableSections[section] intValue];
+    NSInteger settingsSection = [self.tableSections[section] integerValue];
     switch (settingsSection) {
-        case SiteSettingsSectionGeneral: {
-            NSInteger rowsToHide = 0;
+        case SiteSettingsSectionGeneral:
+        {
+            NSInteger rowCount = SiteSettingsGeneralCount;
+            
+            // NOTE: Sergio Estevao (2015.08.25): Hide Privacy because of lack of support in .org
             if (![self.blog supports:BlogFeatureWPComRESTAPI]) {
-                //  NOTE: Sergio Estevao (2015-08-25): Hides the privacy setting for self-hosted sites not in jetpack 
-                // because XML-RPC doens't support this setting to be read or changed.
-                rowsToHide += 1;
+                --rowCount;
             }
-            return SiteSettingsGeneralCount - rowsToHide;
+            
+            // NOTE: Jorge Leandro Perez (2016.02.10): .org Language Settings is inconsistent with .com!
+            if (!self.blog.supportsSiteManagementServices) {
+                --rowCount;
+            }
+            
+            return rowCount;
         }
-        case SiteSettingsSectionAccount: {
+        case SiteSettingsSectionAccount:
+        {
             return SiteSettingsAccountCount;
         }
-        case SiteSettingsSectionWriting: {
-            if (!self.blog.isAdmin) {
-                // If we're not admin, we just want to show the geotagging cell
-                return 1;
-            }
-            NSInteger rowsToHide = 0;
-            if (![self.blog supports:BlogFeatureWPComRESTAPI]) {
-                //  NOTE: Sergio Estevao (2015-09-23): Hides the related post for self-hosted sites not in jetpack
-                // because this options is not available for them.
-                rowsToHide += 1;
-            }
-            return SiteSettingsWritingCount - rowsToHide;
+        case SiteSettingsSectionWriting:
+        {
+            return SiteSettingsWritingCount;
         }
-        case SiteSettingsSectionDiscussion: {
+        case SiteSettingsSectionDiscussion:
+        {
             return 1;
         }
-        case SiteSettingsSectionRemoveSite: {
+        case SiteSettingsSectionRemoveSite:
+        {
             return 1;
+        }
+        case SiteSettingsSectionAdvanced:
+        {
+            return SiteSettingsAdvancedCount;
         }
     }
+
     return 0;
 }
 
@@ -228,41 +246,24 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForAccountSettingsInRow:(NSInteger)row
 {
     switch (row) {
-        case SiteSettingsAccountUsername: {
+        case SiteSettingsAccountUsername:
             if (self.blog.usernameForSite) {
                 [self.usernameTextCell setTextValue:self.blog.usernameForSite];
             } else {
                 [self.usernameTextCell setTextValue:NSLocalizedString(@"Enter username", @"(placeholder) Help enter WordPress username")];
             }
             return self.usernameTextCell;
-        }
-        break;
-        case SiteSettingsAccountPassword: {
+
+        case SiteSettingsAccountPassword:
             if (self.blog.password) {
                 [self.passwordTextCell setTextValue:@"••••••••"];
             } else {
                 [self.passwordTextCell setTextValue:NSLocalizedString(@"Enter password", @"(placeholder) Help enter WordPress password")];
             }
             return self.passwordTextCell;
-        }
-        break;
+
     }
     return nil;
-}
-
-- (SwitchTableViewCell *)geotaggingCell
-{
-    if (_geotaggingCell) {
-        return _geotaggingCell;
-    }
-    _geotaggingCell = [SwitchTableViewCell new];
-    _geotaggingCell.name = NSLocalizedString(@"Geotagging", @"Enables geotagging in blog settings (short label)");
-    _geotaggingCell.on = self.geolocationEnabled;
-    __weak SiteSettingsViewController *weakSelf = self;
-    _geotaggingCell.onChange = ^(BOOL value){
-        [weakSelf toggleGeolocation:value];
-    };
-    return _geotaggingCell;
 }
 
 - (SettingTableViewCell *)defaultCategoryCell
@@ -322,29 +323,31 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     return _removeSiteCell;
 }
 
+- (void)configureDefaultCategoryCell
+{
+    PostCategoryService *postCategoryService = [[PostCategoryService alloc] initWithManagedObjectContext:[[ContextManager sharedInstance] mainContext]];
+    PostCategory *postCategory = [postCategoryService findWithBlogObjectID:self.blog.objectID andCategoryID:self.blog.settings.defaultCategoryID];
+    [self.defaultCategoryCell setTextValue:[postCategory categoryName]];
+}
+
+- (void)configureDefaultPostFormatCell
+{
+    [self.defaultPostFormatCell setTextValue:self.blog.defaultPostFormatText];
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForWritingSettingsAtRow:(NSInteger)row
 {
     switch (row) {
-        case (SiteSettingsWritingGeotagging):{
-            return self.geotaggingCell;
-        }
-        break;
-        case (SiteSettingsWritingDefaultCategory):{
-            PostCategoryService *postCategoryService = [[PostCategoryService alloc] initWithManagedObjectContext:[[ContextManager sharedInstance] mainContext]];
-            PostCategory *postCategory = [postCategoryService findWithBlogObjectID:self.blog.objectID andCategoryID:self.blog.settings.defaultCategoryID];
-            [self.defaultCategoryCell setTextValue:[postCategory categoryName]];
+        case (SiteSettingsWritingDefaultCategory):
+            [self configureDefaultCategoryCell];
             return self.defaultCategoryCell;
-        }
-        break;
-        case (SiteSettingsWritingDefaultPostFormat):{
-            [self.defaultPostFormatCell setTextValue:self.blog.defaultPostFormatText];
-            return self.defaultPostFormatCell;
-        }
-        case (SiteSettingsWritingRelatedPosts):{
-            return self.relatedPostsCell;
-        }
-        break;
 
+        case (SiteSettingsWritingDefaultPostFormat):
+            [self configureDefaultPostFormatCell];
+            return self.defaultPostFormatCell;
+
+        case (SiteSettingsWritingRelatedPosts):
+            return self.relatedPostsCell;
     }
     return nil;
 }
@@ -393,55 +396,135 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     return _privacyTextCell;
 }
 
+- (SettingTableViewCell *)languageTextCell
+{
+    if (_languageTextCell) {
+        return _languageTextCell;
+    }
+    _languageTextCell = [[SettingTableViewCell alloc] initWithLabel:NSLocalizedString(@"Language", @"Label for the privacy setting")
+                                                           editable:self.blog.isAdmin
+                                                    reuseIdentifier:nil];
+    return _languageTextCell;
+}
+
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForGeneralSettingsInRow:(NSInteger)row
 {
     switch (row) {
-        case SiteSettingsGeneralTitle: {
+        case SiteSettingsGeneralTitle:
+        {
             NSString *name = self.blog.settings.name ?: NSLocalizedString(@"A title for the site", @"Placeholder text for the title of a site");
             [self.siteTitleCell setTextValue:name];
             return self.siteTitleCell;
-        } break;
-        case SiteSettingsGeneralTagline: {
+        }
+        case SiteSettingsGeneralTagline:
+        {
             NSString *tagline = self.blog.settings.tagline ?: NSLocalizedString(@"Explain what this site is about.", @"Placeholder text for the tagline of a site");
             [self.siteTaglineCell setTextValue:tagline];
             return self.siteTaglineCell;
-        } break;
-        case SiteSettingsGeneralURL: {
+        }
+        case SiteSettingsGeneralURL:
+        {
             if (self.blog.url) {
                 [self.addressTextCell setTextValue:self.blog.url];
             } else {
                 [self.addressTextCell setTextValue:NSLocalizedString(@"http://my-site-address (URL)", @"(placeholder) Help the user enter a URL into the field")];
             }
             return self.addressTextCell;
-        } break;
-        case SiteSettingsGeneralPrivacy: {
-            [self.privacyTextCell setTextValue:[self.blog textForCurrentSiteVisibility]];
+        }
+        case SiteSettingsGeneralPrivacy:
+        {
+            [self.privacyTextCell setTextValue:[BlogSiteVisibilityHelper titleForCurrentSiteVisibilityOfBlog:self.blog]];
             return self.privacyTextCell;
-        } break;
+        }
+        case SiteSettingsGeneralLanguage:
+        {
+            NSInteger languageId = self.blog.settings.languageID.integerValue;
+            NSString *name = [[WordPressComLanguageDatabase new] nameForLanguageWithId:languageId];
+            
+            [self.languageTextCell setTextValue:name];
+            return self.languageTextCell;
+        }
     }
+
     return [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"NoCell"];
 }
 
+- (SettingTableViewCell *)startOverCell
+{
+    if (_startOverCell) {
+        return _startOverCell;
+    }
+    
+    _startOverCell = [[SettingTableViewCell alloc] initWithLabel:NSLocalizedString(@"Start Over", @"Label for selecting the Start Over Settings item")
+                                                        editable:YES
+                                                 reuseIdentifier:nil];
+    return _startOverCell;
+}
+
+- (WPTableViewCell *)exportContentCell
+{
+    if (_exportContentCell) {
+        return _exportContentCell;
+    }
+    
+    _exportContentCell = [[WPTableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    [WPStyleGuide configureTableViewActionCell:_exportContentCell];
+    _exportContentCell.textLabel.text = NSLocalizedString(@"Export Content", @"Label for selecting the Export Content Settings item");
+
+    return _exportContentCell;
+}
+
+- (WPTableViewCell *)deleteSiteCell
+{
+    if (_deleteSiteCell) {
+        return _deleteSiteCell;
+    }
+    
+    _deleteSiteCell = [[WPTableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    [WPStyleGuide configureTableViewActionCell:_deleteSiteCell];
+    _deleteSiteCell.textLabel.text = NSLocalizedString(@"Delete Site", @"Label for selecting the Delete Site Settings item");
+
+    return _deleteSiteCell;
+}
+
+- (UITableViewCell *)tableView:(UITableView *)tableView cellForAdvancedSettingsAtRow:(NSInteger)row
+{
+    switch (row) {
+        case SiteSettingsAdvancedStartOver:
+            return self.startOverCell;
+
+        case SiteSettingsAdvancedExportContent:
+            return self.exportContentCell;
+
+        case SiteSettingsAdvancedDeleteSite:
+            return self.deleteSiteCell;
+    }
+
+    NSAssert(false, @"Missing Advanced section cell");
+    return [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"NoCell"];
+}
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    NSInteger settingsSection = [self.tableSections[indexPath.section] intValue];
+    NSInteger settingsSection = [self.tableSections[indexPath.section] integerValue];
     switch (settingsSection) {
-        case SiteSettingsSectionGeneral: {
+        case SiteSettingsSectionGeneral:
             return [self tableView:tableView cellForGeneralSettingsInRow:indexPath.row];
-        }
-        case SiteSettingsSectionAccount: {
+
+        case SiteSettingsSectionAccount:
             return [self tableView:tableView cellForAccountSettingsInRow:indexPath.row];
-        }
-        case SiteSettingsSectionWriting: {
+
+        case SiteSettingsSectionWriting:
             return [self tableView:tableView cellForWritingSettingsAtRow:indexPath.row];
-        }
-        case SiteSettingsSectionDiscussion: {
+
+        case SiteSettingsSectionDiscussion:
             return self.discussionSettingsCell;
-        }
-        case SiteSettingsSectionRemoveSite: {
+
+        case SiteSettingsSectionRemoveSite:
             return self.removeSiteCell;
-        }
+
+        case SiteSettingsSectionAdvanced:
+            return [self tableView:tableView cellForAdvancedSettingsAtRow:indexPath.row];
     }
 
     NSAssert(false, @"Missing section handler");
@@ -450,29 +533,20 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 
 #pragma mark - UITableViewDelegate
 
-- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+- (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
-    NSInteger settingsSection = [self.tableSections[section] intValue];
-    NSString *title = [self titleForHeaderInSection:settingsSection];
-    if (title.length == 0) {
-        return [UIView new];
-    }
-    
-    WPTableViewSectionHeaderFooterView *header = [[WPTableViewSectionHeaderFooterView alloc] initWithReuseIdentifier:nil style:WPTableViewSectionStyleHeader];
-    header.title = title;
-    return header;
+    NSInteger settingsSection = [self.tableSections[section] integerValue];
+    return [self titleForHeaderInSection:settingsSection];
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayHeaderView:(UIView *)view forSection:(NSInteger)section
+{
+    [WPStyleGuide configureTableViewSectionHeader:view];
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
     return WPTableViewDefaultRowHeight;
-}
-
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
-{
-    NSInteger settingsSection = [self.tableSections[section] intValue];
-    NSString *title = [self titleForHeaderInSection:settingsSection];
-    return [WPTableViewSectionHeaderFooterView heightForHeader:title width:CGRectGetWidth(self.view.bounds)];
 }
 
 - (NSString *)titleForHeaderInSection:(NSInteger)section
@@ -482,11 +556,17 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
         case SiteSettingsSectionGeneral:
             headingTitle = NSLocalizedString(@"General", @"Title for the general section in site settings screen");
             break;
+
         case SiteSettingsSectionAccount:
             headingTitle = NSLocalizedString(@"Account", @"Title for the account section in site settings screen");
             break;
+
         case SiteSettingsSectionWriting:
             headingTitle = NSLocalizedString(@"Writing", @"Title for the writing section in site settings screen");
+            break;
+
+        case SiteSettingsSectionAdvanced:
+            headingTitle = NSLocalizedString(@"Advanced", @"Title for the advanced section in site settings screen");
             break;
     }
     return headingTitle;
@@ -494,20 +574,10 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 
 - (void)showPrivacySelector
 {
-    NSArray *values = @[ @(SiteVisibilityPublic), @(SiteVisibilityHidden), @(SiteVisibilityPrivate)];
-    NSMutableArray *titles = [NSMutableArray array];
-    for (NSNumber * value in values) {
-        [titles addObject:[BlogSiteVisibilityHelper textForSiteVisibility:[value integerValue]]];
-    }
-    NSArray *hints = @[
-                       NSLocalizedString(@"Your site is visible to everyone, and it may be indexed by search engines.",
-                                         @"Hint for users when public privacy setting is set"),
-                       NSLocalizedString(@"Your site is visible to everyone, but asks search engines not to index your site.",
-                                         @"Hint for users when hidden privacy setting is set"),
-                       NSLocalizedString(@"Your site is only visible to you and users you approve.",
-                                         @"Hint for users when private privacy setting is set"),
-                       ];
-
+    NSArray *values = [BlogSiteVisibilityHelper siteVisibilityValuesForBlog:self.blog];
+    NSArray *titles = [BlogSiteVisibilityHelper titlesForSiteVisibilityValues:values];
+    NSArray *hints  = [BlogSiteVisibilityHelper hintsForSiteVisibilityValues:values];
+   
     NSNumber *currentPrivacy = @(self.blog.siteVisibility);
     if (!currentPrivacy) {
         currentPrivacy = [values firstObject];
@@ -538,74 +608,120 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     [self.navigationController pushViewController:vc animated:YES];
 }
 
+- (void)showLanguageSelectorForBlog:(Blog *)blog
+{
+    NSParameterAssert(blog);
+    
+    __weak __typeof__(self) weakSelf = self;
+    
+    LanguageViewController *languageViewController = [[LanguageViewController alloc] initWithBlog:blog];
+    languageViewController.onChange = ^(NSNumber *newLanguageID){
+        weakSelf.blog.settings.languageID = newLanguageID;
+        [weakSelf saveSettings];
+    };
+    
+    [self.navigationController pushViewController:languageViewController animated:YES];
+}
+
 - (void)tableView:(UITableView *)tableView didSelectInGeneralSectionRow:(NSInteger)row
 {
+    if (!self.blog.isAdmin) {
+        return;
+    }
+
     switch (row) {
-        case SiteSettingsGeneralTitle:{
-            if (!self.blog.isAdmin) {
-                return;
-            }
-            SettingsTextViewController *siteTitleViewController = [[SettingsTextViewController alloc] initWithText:self.blog.settings.name
-                                                                                                       placeholder:NSLocalizedString(@"A title for the site", @"Placeholder text for the title of a site")
-                                                                                                              hint:@""
-                                                                                                        isPassword:NO];
-            siteTitleViewController.title = NSLocalizedString(@"Site Title", @"Title for screen that show site title editor");
-            siteTitleViewController.onValueChanged = ^(NSString *value) {
-                self.siteTitleCell.detailTextLabel.text = value;
-                if (![value isEqualToString:self.blog.settings.name]){
-                    self.blog.settings.name = value;
-                    [self saveSettings];
-                }
-            };
-            [self.navigationController pushViewController:siteTitleViewController animated:YES];
-        }break;
-        case SiteSettingsGeneralTagline:{
-            if (!self.blog.isAdmin) {
-                return;
-            }
-            SettingsMultiTextViewController *siteTaglineViewController = [[SettingsMultiTextViewController alloc] initWithText:self.blog.settings.tagline
-                                                                                                                   placeholder:NSLocalizedString(@"Explain what this site is about.", @"Placeholder text for the tagline of a site")
-                                                                                                                          hint:NSLocalizedString(@"In a few words, explain what this site is about.",@"Explain what is the purpose of the tagline")
-                                                                                                                    isPassword:NO];
-            siteTaglineViewController.title = NSLocalizedString(@"Tagline", @"Title for screen that show tagline editor");
-            siteTaglineViewController.onValueChanged = ^(NSString *value) {
-                NSString *normalizedTagline = [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                self.siteTaglineCell.detailTextLabel.text = normalizedTagline;
-                if (![normalizedTagline isEqualToString:self.blog.settings.tagline]){
-                    self.blog.settings.tagline = normalizedTagline;
-                    [self saveSettings];
-                }
-            };
-            [self.navigationController pushViewController:siteTaglineViewController animated:YES];
-        }break;
-        case SiteSettingsGeneralPrivacy:{
-            if (!self.blog.isAdmin) {
-                return;
-            }
+        case SiteSettingsGeneralTitle:
+            [self showEditSiteTitleController];
+            break;
+
+        case SiteSettingsGeneralTagline:
+            [self showEditSiteTaglineController];
+            break;
+
+        case SiteSettingsGeneralPrivacy:
             [self showPrivacySelector];
-        }break;
+            break;
+            
+        case SiteSettingsGeneralLanguage:
+            [self showLanguageSelectorForBlog:self.blog];
+            break;
     }
 }
 
 - (void)tableView:(UITableView *)tableView didSelectInAccountSectionRow:(NSInteger)row
 {
-    switch (row) {
-        case SiteSettingsAccountPassword:{
-            SettingsTextViewController *siteTitleViewController = [[SettingsTextViewController alloc] initWithText:self.blog.password
-                                                                                                       placeholder:NSLocalizedString(@"Enter password", @"(placeholder) Help enter WordPress password")
-                                                                                                              hint:@""
-                                                                                                        isPassword:YES];
-            siteTitleViewController.title = NSLocalizedString(@"Password", @"Title for screen that shows self hosted password editor.");
-            siteTitleViewController.onValueChanged = ^(id value) {
-                if (![value isEqualToString:self.blog.password]) {
-                    [self.navigationItem setHidesBackButton:YES animated:YES];
-                    self.password = value;
-                    [self validateLoginCredentials];
-                }
-            };
-            [self.navigationController pushViewController:siteTitleViewController animated:YES];
-        }break;
+    if (row != SiteSettingsAccountPassword) {
+        return;
     }
+    SettingsTextViewController *siteTitleViewController = [[SettingsTextViewController alloc] initWithText:self.blog.password
+                                                                                               placeholder:NSLocalizedString(@"Enter password", @"(placeholder) Help enter WordPress password")
+                                                                                                      hint:@""];
+    siteTitleViewController.title = NSLocalizedString(@"Password", @"Title for screen that shows self hosted password editor.");
+    siteTitleViewController.mode = SettingsTextModesPassword;
+    siteTitleViewController.onValueChanged = ^(id value) {
+        if (![value isEqualToString:self.blog.password]) {
+            self.password = value;
+            [self validateLoginCredentials];
+        }
+    };
+    [self.navigationController pushViewController:siteTitleViewController animated:YES];
+}
+
+- (void)showEditSiteTitleController
+{
+    if (!self.blog.isAdmin) {
+        return;
+    }
+
+    SettingsTextViewController *siteTitleViewController = [[SettingsTextViewController alloc] initWithText:self.blog.settings.name
+                                                                                               placeholder:NSLocalizedString(@"A title for the site", @"Placeholder text for the title of a site")
+                                                                                                      hint:@""];
+    siteTitleViewController.title = NSLocalizedString(@"Site Title", @"Title for screen that show site title editor");
+    siteTitleViewController.onValueChanged = ^(NSString *value) {
+        self.siteTitleCell.detailTextLabel.text = value;
+        if (![value isEqualToString:self.blog.settings.name]){
+            self.blog.settings.name = value;
+            [self saveSettings];
+        }
+    };
+    [self.navigationController pushViewController:siteTitleViewController animated:YES];
+}
+
+- (void)showEditSiteTaglineController
+{
+    if (!self.blog.isAdmin) {
+        return;
+    }
+
+    SettingsTextViewController *siteTaglineViewController = [[SettingsTextViewController alloc] initWithText:self.blog.settings.tagline
+                                                                                                           placeholder:NSLocalizedString(@"Explain what this site is about.", @"Placeholder text for the tagline of a site")
+                                                                                                        hint:NSLocalizedString(@"In a few words, explain what this site is about.",@"Explain what is the purpose of the tagline")];
+    siteTaglineViewController.title = NSLocalizedString(@"Tagline", @"Title for screen that show tagline editor");
+    siteTaglineViewController.onValueChanged = ^(NSString *value) {
+        NSString *normalizedTagline = [value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        self.siteTaglineCell.detailTextLabel.text = normalizedTagline;
+        if (![normalizedTagline isEqualToString:self.blog.settings.tagline]) {
+            self.blog.settings.tagline = normalizedTagline;
+            [self saveSettings];
+        }
+    };
+    [self.navigationController pushViewController:siteTaglineViewController animated:YES];
+}
+
+- (void)showDefaultCategorySelector
+{
+    PostCategoryService *postCategoryService = [[PostCategoryService alloc] initWithManagedObjectContext:[[ContextManager sharedInstance] mainContext]];
+    NSNumber *defaultCategoryID = self.blog.settings.defaultCategoryID ?: @(PostCategoryUncategorized);
+    PostCategory *postCategory = [postCategoryService findWithBlogObjectID:self.blog.objectID andCategoryID:defaultCategoryID];
+    NSArray *currentSelection = @[];
+    if (postCategory){
+        currentSelection = @[postCategory];
+    }
+    PostCategoriesViewController *postCategoriesViewController = [[PostCategoriesViewController alloc] initWithBlog:self.blog
+                                                                                                   currentSelection:currentSelection
+                                                                                                      selectionMode:CategoriesSelectionModeBlogDefault];
+    postCategoriesViewController.delegate = self;
+    [self.navigationController pushViewController:postCategoriesViewController animated:YES];
 }
 
 - (void)showPostFormatSelector
@@ -634,7 +750,9 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
         if ([status isKindOfClass:[NSString class]]) {
             if (weakSelf.blog.settings.defaultPostFormat != status) {
                 weakSelf.blog.settings.defaultPostFormat = status;
-                [weakSelf saveSettings];
+                if ([weakSelf savingWritingDefaultsIsAvailable]) {
+                    [weakSelf saveSettings];
+                }
             }
         }
     };
@@ -652,30 +770,43 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 - (void)tableView:(UITableView *)tableView didSelectInWritingSectionRow:(NSInteger)row
 {
     switch (row) {
-        case SiteSettingsWritingDefaultCategory:{
-            PostCategoryService *postCategoryService = [[PostCategoryService alloc] initWithManagedObjectContext:[[ContextManager sharedInstance] mainContext]];
-            NSNumber *defaultCategoryID = self.blog.settings.defaultCategoryID ?: @(PostCategoryUncategorized);
-            PostCategory *postCategory = [postCategoryService findWithBlogObjectID:self.blog.objectID andCategoryID:defaultCategoryID];
-            NSArray *currentSelection = @[];
-            if (postCategory){
-                currentSelection = @[postCategory];
-            }
-            PostCategoriesViewController *postCategoriesViewController = [[PostCategoriesViewController alloc] initWithBlog:self.blog
-                                                                                                           currentSelection:currentSelection
-                                                                                                              selectionMode:CategoriesSelectionModeBlogDefault];
-            postCategoriesViewController.delegate = self;
-            [self.navigationController pushViewController:postCategoriesViewController animated:YES];
-        }
-        break;
-        case SiteSettingsWritingDefaultPostFormat:{
-            [self showPostFormatSelector];
-        }
-        break;
-        case SiteSettingsWritingRelatedPosts:{
-            [self showRelatedPostsSettings];
-        }
-        break;
+        case SiteSettingsWritingDefaultCategory:
+            [self showDefaultCategorySelector];
+            break;
 
+        case SiteSettingsWritingDefaultPostFormat:
+            [self showPostFormatSelector];
+            break;
+
+        case SiteSettingsWritingRelatedPosts:
+            [self showRelatedPostsSettings];
+            break;
+    }
+}
+
+- (void)showStartOverForBlog:(Blog *)blog
+{
+    NSParameterAssert([blog supportsSiteManagementServices]);
+
+    [WPAppAnalytics track:WPAnalyticsStatSiteSettingsStartOverAccessed withBlog:self.blog];
+    StartOverViewController *viewController = [[StartOverViewController alloc] initWithBlog:blog];
+    [self.navigationController pushViewController:viewController animated:YES];
+}
+
+- (void)tableView:(UITableView *)tableView didSelectInAdvancedSectionRow:(NSInteger)row
+{
+    switch (row) {
+        case SiteSettingsAdvancedStartOver:
+            [self showStartOverForBlog:self.blog];
+            break;
+
+        case SiteSettingsAdvancedExportContent:
+            [self confirmExportContent];
+            break;
+
+        case SiteSettingsAdvancedDeleteSite:
+            [self checkSiteDeletable];
+            break;
     }
 }
 
@@ -683,22 +814,30 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 {
     NSInteger settingsSection = [self.tableSections[indexPath.section] intValue];
     switch (settingsSection) {
-        case SiteSettingsSectionGeneral: {
+        case SiteSettingsSectionGeneral:
             [self tableView:tableView didSelectInGeneralSectionRow:indexPath.row];
-        } break;
-        case SiteSettingsSectionAccount: {
+            break;
+
+        case SiteSettingsSectionAccount:
             [self tableView:tableView didSelectInAccountSectionRow:indexPath.row];
-        } break;
-        case SiteSettingsSectionWriting: {
+            break;
+
+        case SiteSettingsSectionWriting:
             [self tableView:tableView didSelectInWritingSectionRow:indexPath.row];
-        } break;
-        case SiteSettingsSectionDiscussion: {
+            break;
+
+        case SiteSettingsSectionDiscussion:
             [self showDiscussionSettingsForBlog:self.blog];
-        } break;
-        case SiteSettingsSectionRemoveSite:{
-            [tableView deselectSelectedRowWithAnimation:YES];
+            break;
+
+        case SiteSettingsSectionRemoveSite:
             [self showRemoveSiteForBlog:self.blog];
-        } break;
+            [tableView deselectSelectedRowWithAnimation:YES];
+            break;
+
+        case SiteSettingsSectionAdvanced:
+            [self tableView:tableView didSelectInAdvancedSectionRow:indexPath.row];
+            break;
     }
 }
 
@@ -723,16 +862,6 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     }];
     
 }
-
-- (void)toggleGeolocation:(BOOL)value
-{
-    self.geolocationEnabled = value;
-
-    // Save the change
-    self.blog.settings.geolocationEnabled = self.geolocationEnabled;
-    [[ContextManager sharedInstance] saveContext:self.blog.managedObjectContext];
-}
-
 
 #pragma mark - Authentication methods
 
@@ -762,29 +891,29 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     [SVProgressHUD showWithStatus:NSLocalizedString(@"Authenticating", @"") maskType:SVProgressHUDMaskTypeBlack];
 
     NSURL *xmlRpcURL = [NSURL URLWithString:self.blog.xmlrpc];
-    WordPressXMLRPCApi *api = [WordPressXMLRPCApi apiWithXMLRPCEndpoint:xmlRpcURL
-                                                               username:self.username
-                                                               password:self.password];
+    WordPressOrgXMLRPCApi *api = [[WordPressOrgXMLRPCApi alloc] initWithEndpoint:xmlRpcURL userAgent:[WPUserAgent wordPressUserAgent]];
     __weak __typeof__(self) weakSelf = self;
-    [api getBlogOptionsWithSuccess:^(id options){
-        [SVProgressHUD dismiss];
-        __typeof__(self) strongSelf = weakSelf;
-        if (!strongSelf) {
-            return;
-        }
-        BlogService *blogService = [[BlogService alloc] initWithManagedObjectContext:strongSelf.blog.managedObjectContext];
-        [blogService updatePassword:strongSelf.password forBlog:strongSelf.blog];
-        [strongSelf.navigationItem setHidesBackButton:NO animated:NO];
-    } failure:^(NSError *error){
-        [SVProgressHUD dismiss];
-        [weakSelf loginValidationFailedWithError:error];
+    [api checkCredentials:self.username password:self.password success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [SVProgressHUD dismiss];
+            __typeof__(self) strongSelf = weakSelf;
+            if (!strongSelf) {
+                return;
+            }
+            BlogService *blogService = [[BlogService alloc] initWithManagedObjectContext:strongSelf.blog.managedObjectContext];
+            [blogService updatePassword:strongSelf.password forBlog:strongSelf.blog];
+        });
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [SVProgressHUD dismiss];
+            [weakSelf loginValidationFailedWithError:error];
+        });
     }];
 }
 
 
 - (void)loginValidationFailedWithError:(NSError *)error
 {
-    [self.navigationItem setHidesBackButton:NO animated:NO];
     self.password = self.blog.password;    
     if (error) {
         NSString *message;
@@ -825,7 +954,7 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 
     NSURL *targetURL = [NSURL URLWithString:path];
     WPWebViewController *webViewController = [WPWebViewController webViewControllerWithURL:targetURL];
-    webViewController.authToken = self.authToken;
+    webViewController.authToken = self.blog.authToken;
     webViewController.username = self.username;
     webViewController.password = self.password;
     webViewController.wpLoginURL = [NSURL URLWithString:self.blog.loginUrl];
@@ -850,22 +979,15 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
     }];
 }
 
-- (IBAction)cancel:(id)sender
+- (BOOL)savingWritingDefaultsIsAvailable
 {
-    if (self.isCancellable) {
-        [self dismissViewControllerAnimated:YES completion:nil];
-    } else {
-        [self.navigationController popToRootViewControllerAnimated:YES];
-    }
-
-    if (self.delegate) {
-        // If sender is not nil then the user tapped the cancel button.
-        BOOL wascancelled = (sender != nil);
-        [self.delegate controllerDidDismiss:self cancelled:wascancelled];
-    }
+    return [self.blog supports:BlogFeatureWPComRESTAPI] && self.blog.isAdmin;
 }
 
-
+- (IBAction)dismiss
+{
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
 
 #pragma mark - Discussion
 
@@ -920,7 +1042,19 @@ NS_ENUM(NSInteger, SiteSettingsSection) {
 {
     self.blog.settings.defaultCategoryID = category.categoryID;
     self.defaultCategoryCell.detailTextLabel.text = category.categoryName;
-    [self saveSettings];
+    if ([self savingWritingDefaultsIsAvailable]) {
+        [self saveSettings];
+    }
+}
+
+#pragma mark - Notification handlers
+
+- (void)handleDataModelChange:(NSNotification *)note
+{
+    NSSet *updatedObjects = note.userInfo[NSUpdatedObjectsKey];
+    if ([updatedObjects containsObject:self.blog]) {
+        [self.tableView reloadData];
+    }
 }
 
 @end

@@ -5,7 +5,7 @@
 #import "WPAnalyticsTrackerWPCom.h"
 #import "WPAnalyticsTrackerAutomatticTracks.h"
 #import "WPTabBarController.h"
-#import "WordPressComApiCredentials.h"
+#import "ApiCredentials.h"
 #import "WordPressAppDelegate.h"
 #import "Blog.h"
 
@@ -74,7 +74,7 @@ static NSString * const WPAppAnalyticsKeyTimeInApp = @"time_in_app";
 {
     [self initializeUsageTrackingIfNecessary];
     
-    if ([WordPressComApiCredentials mixpanelAPIToken].length > 0) {
+    if ([ApiCredentials mixpanelAPIToken].length > 0) {
         [WPAnalytics registerTracker:[[WPAnalyticsTrackerMixpanel alloc] initWithManagedObjectContext:[[ContextManager sharedInstance] mainContext]]];
     }
 
@@ -193,6 +193,23 @@ static NSString * const WPAppAnalyticsKeyTimeInApp = @"time_in_app";
     }
 }
 
++ (void)trackTrainTracksInteraction:(WPAnalyticsStat)stat withProperties:(NSDictionary *)properties
+{
+    NSMutableDictionary *mutableProperties;
+    if (properties) {
+        mutableProperties = [NSMutableDictionary dictionaryWithDictionary:properties];
+    } else {
+        mutableProperties = [NSMutableDictionary new];
+    }
+    // TrainTracks are specific to the AutomatticTracks tracker.
+    // The action property should be the event string for the stat.
+    // Other trackers should ignore `WPAnalyticsStatTrainTracksInteract`
+    NSString *eventName = [WPAnalyticsTrackerAutomatticTracks eventNameForStat:stat];
+    [mutableProperties setObject:eventName forKey:@"action"];
+
+    [self track:WPAnalyticsStatTrainTracksInteract withProperties:mutableProperties];
+}
+
 /**
  *  @brief      Pass-through method to [WPAnalytics track:stat]. Use this method instead of calling WPAnalytics directly.
  */
@@ -205,6 +222,14 @@ static NSString * const WPAppAnalyticsKeyTimeInApp = @"time_in_app";
  */
 + (void)track:(WPAnalyticsStat)stat withProperties:(NSDictionary *)properties {
     [WPAnalytics track:stat withProperties:properties];
+}
+
++ (void)track:(WPAnalyticsStat)stat error:(NSError * _Nonnull)error {
+    NSDictionary *properties = @{
+                                 @"error_code" : [@(error.code) stringValue],
+                                 @"error_domain": error.domain
+    };
+    [self track:stat withProperties: properties];
 }
 
 #pragma mark - Usage tracking initialization

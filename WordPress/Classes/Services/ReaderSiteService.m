@@ -2,13 +2,10 @@
 
 #import "AccountService.h"
 #import "ContextManager.h"
-#import "RemoteReaderSite.h"
 #import "ReaderPostService.h"
 #import "ReaderPost.h"
-#import "ReaderSite.h"
 #import "ReaderSiteServiceRemote.h"
 #import "ReaderTopicService.h"
-#import "WordPressComApi.h"
 #import "WPAccount.h"
 #import "WordPress-Swift.h"
 #import "WPAppAnalytics.h"
@@ -17,35 +14,9 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
 
 @implementation ReaderSiteService
 
-- (void)fetchFollowedSitesWithSuccess:(void(^)())success failure:(void(^)(NSError *error))failure
-{
-    WordPressComApi *api = [self apiForRequest];
-    if (!api) {
-        if (failure) {
-            failure([self errorForNotLoggedIn]);
-        }
-        return;
-    }
-
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:api];
-    [service fetchFollowedSitesWithSuccess:^(NSArray *sites) {
-        AccountService *accountService = [[AccountService alloc] initWithManagedObjectContext:self.managedObjectContext];
-        WPAccount *defaultAccount = [accountService defaultWordPressComAccount];
-        [self mergeSites:sites forAccount:defaultAccount];
-
-        if (success) {
-            success();
-        }
-    } failure:^(NSError *error) {
-        if (failure) {
-            failure(error);
-        }
-    }];
-}
-
 - (void)followSiteByURL:(NSURL *)siteURL success:(void (^)())success failure:(void(^)(NSError *error))failure
 {
-    WordPressComApi *api = [self apiForRequest];
+    WordPressComRestApi *api = [self apiForRequest];
     if (!api) {
         if (failure) {
             failure([self errorForNotLoggedIn]);
@@ -53,7 +24,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
         return;
     }
 
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:api];
+    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithWordPressComRestApi:api];
 
     // Make sure the URL provided leads to a visible site / does not 404.
     [service checkSiteExistsAtURL:siteURL success:^{
@@ -67,7 +38,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
 
 - (void)followSiteWithID:(NSUInteger)siteID success:(void(^)())success failure:(void(^)(NSError *error))failure
 {
-    WordPressComApi *api = [self apiForRequest];
+    WordPressComRestApi *api = [self apiForRequest];
     if (!api) {
         if (failure) {
             failure([self errorForNotLoggedIn]);
@@ -75,7 +46,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
         return;
     }
 
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:api];
+    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithWordPressComRestApi:api];
     [service checkSubscribedToSiteByID:siteID success:^(BOOL follows) {
         if (follows) {
             if (failure) {
@@ -100,7 +71,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
 
 - (void)unfollowSiteWithID:(NSUInteger)siteID success:(void(^)())success failure:(void(^)(NSError *error))failure
 {
-    WordPressComApi *api = [self apiForRequest];
+    WordPressComRestApi *api = [self apiForRequest];
     if (!api) {
         if (failure) {
             failure([self errorForNotLoggedIn]);
@@ -108,8 +79,9 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
         return;
     }
 
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:[self apiForRequest]];
+    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithWordPressComRestApi:[self apiForRequest]];
     [service unfollowSiteWithID:siteID success:^(){
+        [self unfollowSiteTopicWithSiteID:@(siteID)];
         if (success) {
             success();
         }
@@ -120,7 +92,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
 
 - (void)followSiteAtURL:(NSString *)siteURL success:(void(^)())success failure:(void(^)(NSError *error))failure
 {
-    WordPressComApi *api = [self apiForRequest];
+    WordPressComRestApi *api = [self apiForRequest];
     if (!api) {
         if (failure) {
             failure([self errorForNotLoggedIn]);
@@ -135,7 +107,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
         sanitizedURL = [NSString stringWithFormat:@"http://%@", sanitizedURL];
     }
 
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:[self apiForRequest]];
+    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithWordPressComRestApi:[self apiForRequest]];
     [service checkSubscribedToFeedByURL:[NSURL URLWithString:sanitizedURL] success:^(BOOL follows) {
         if (follows) {
             if (failure) {
@@ -147,7 +119,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
             if (success) {
                 success();
             }
-            [WPAppAnalytics track:WPAnalyticsStatReaderSiteFollowed withProperties:@{ @"URL":sanitizedURL }];
+            [WPAppAnalytics track:WPAnalyticsStatReaderSiteFollowed withProperties:@{ @"url":sanitizedURL }];
 
         } failure:failure];
     } failure:^(NSError *error) {
@@ -159,7 +131,7 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
 
 - (void)unfollowSiteAtURL:(NSString *)siteURL success:(void(^)())success failure:(void(^)(NSError *error))failure
 {
-    WordPressComApi *api = [self apiForRequest];
+    WordPressComRestApi *api = [self apiForRequest];
     if (!api) {
         if (failure) {
             failure([self errorForNotLoggedIn]);
@@ -167,48 +139,26 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
         return;
     }
 
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:[self apiForRequest]];
+    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithWordPressComRestApi:[self apiForRequest]];
     [service unfollowSiteAtURL:siteURL success:^(){
+        [self unfollowSiteTopicWithURL:siteURL];
         if (success) {
             success();
         }
-        [WPAppAnalytics track:WPAnalyticsStatReaderSiteUnfollowed withProperties:@{@"URL":siteURL}];
+        [WPAppAnalytics track:WPAnalyticsStatReaderSiteUnfollowed withProperties:@{@"url":siteURL}];
     } failure:failure];
 }
 
-- (void)unfollowSite:(ReaderSite *)site success:(void(^)())success failure:(void(^)(NSError *error))failure
-{
-    NSString *path = site.path;
-    NSUInteger siteID = [site.siteID integerValue];
-
-    // Optimistically delete
-    [self deletePostsFromFollowedTopicForSite:site];
-    [self.managedObjectContext deleteObject:site];
-    [self.managedObjectContext performBlockAndWait:^{
-        [[ContextManager sharedInstance] saveContext:self.managedObjectContext];
-    }];
-
-    if ([site isFeed]) {
-        [self unfollowSiteAtURL:path success:success failure:failure];
-    } else {
-        [self unfollowSiteWithID:siteID success:success failure:failure];
-    }
-}
-
-- (void)deletePostsFromFollowedTopicForSite:(ReaderSite *)site
+- (void)unfollowSiteTopicWithSiteID:(NSNumber *)siteID
 {
     ReaderTopicService *topicService = [[ReaderTopicService alloc] initWithManagedObjectContext:self.managedObjectContext];
-    ReaderAbstractTopic *followedSites = [topicService topicForFollowedSites];
-    if (!followedSites) {
-        return;
-    }
-    NSNumber *siteID = site.siteID;
-    if (!siteID) {
-        siteID = site.feedID;
-    }
-    NSManagedObjectContext *context = [[ContextManager sharedInstance] newDerivedContext];
-    ReaderPostService *postService = [[ReaderPostService alloc] initWithManagedObjectContext:context];
-    [postService deletePostsWithSiteID:siteID andSiteURL:site.path fromTopic:followedSites];
+    [topicService markUnfollowedSiteTopicWithSiteID:siteID];
+}
+
+- (void)unfollowSiteTopicWithURL:(NSString *)siteURL
+{
+    ReaderTopicService *topicService = [[ReaderTopicService alloc] initWithManagedObjectContext:self.managedObjectContext];
+    [topicService markUnfollowedSiteTopicWithFeedURL:siteURL];
 }
 
 - (void)syncPostsForFollowedSites
@@ -224,10 +174,9 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
     [postService fetchPostsForTopic:followedSites earlierThan:[NSDate date] success:nil failure:nil];
 }
 
-
 - (void)flagSiteWithID:(NSNumber *)siteID asBlocked:(BOOL)blocked success:(void(^)())success failure:(void(^)(NSError *error))failure
 {
-    WordPressComApi *api = [self apiForRequest];
+    WordPressComRestApi *api = [self apiForRequest];
     if (!api) {
         if (failure) {
             failure([self errorForNotLoggedIn]);
@@ -238,9 +187,9 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
     // Optimistically flag the posts from the site being blocked.
     [self flagPostsFromSite:siteID asBlocked:blocked];
 
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:api];
+    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithWordPressComRestApi:api];
     [service flagSiteWithID:[siteID integerValue] asBlocked:blocked success:^{
-        NSDictionary *properties = @{@"siteID":siteID, WPAppAnalyticsKeyBlogID:siteID};
+        NSDictionary *properties = @{WPAppAnalyticsKeyBlogID:siteID};
         [WPAppAnalytics track:WPAnalyticsStatReaderSiteBlocked withProperties:properties];
         
         if (success) {
@@ -261,11 +210,11 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
 /**
  Get the api to use for the request.
  */
-- (WordPressComApi *)apiForRequest
+- (WordPressComRestApi *)apiForRequest
 {
     AccountService *accountService = [[AccountService alloc] initWithManagedObjectContext:self.managedObjectContext];
     WPAccount *defaultAccount = [accountService defaultWordPressComAccount];
-    WordPressComApi *api = [defaultAccount restApi];
+    WordPressComRestApi *api = [defaultAccount wordPressComRestApi];
     if (![api hasCredentials]) {
         return nil;
     }
@@ -277,8 +226,8 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
  */
 - (void)followExistingSiteByURL:(NSURL *)siteURL success:(void (^)())success failure:(void(^)(NSError *error))failure
 {
-    WordPressComApi *api = [self apiForRequest];
-    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithApi:api];
+    WordPressComRestApi *api = [self apiForRequest];
+    ReaderSiteServiceRemote *service = [[ReaderSiteServiceRemote alloc] initWithWordPressComRestApi:api];
     [service findSiteIDForURL:siteURL success:^(NSUInteger siteID) {
         if (siteID) {
             [self followSiteWithID:siteID success:success failure:failure];
@@ -297,117 +246,6 @@ NSString * const ReaderSiteServiceErrorDomain = @"ReaderSiteServiceErrorDomain";
     [service flagPostsFromSite:siteID asBlocked:blocked];
 }
 
-
-/**
- Saves the specified `ReaderSites`. Any `ReaderSites` not included in the passed
- array are removed from Core Data.
-
- @param sites An array of `ReaderSites` to save.
- @param account The account the sites should belong to.
- */
-- (void)mergeSites:(NSArray *)sites forAccount:(WPAccount *)account {
-    NSArray *currentSites = [self allSites];
-    NSMutableArray *sitesToKeep = [NSMutableArray array];
-
-    for (RemoteReaderSite *remoteSite in sites) {
-        ReaderSite *newSite = [self createOrReplaceFromRemoteSite:remoteSite];
-        newSite.account = account;
-        if (newSite != nil) {
-            [sitesToKeep addObject:newSite];
-        } else {
-            DDLogInfo(@"%@ returned a nil site: %@", NSStringFromSelector(_cmd), remoteSite);
-        }
-    }
-
-    if ([currentSites count] > 0) {
-        for (ReaderSite *site in currentSites) {
-            if (![sitesToKeep containsObject:site]) {
-                DDLogInfo(@"Deleting ReaderSite: %@", site);
-                [self.managedObjectContext deleteObject:site];
-            }
-        }
-    }
-
-    [self.managedObjectContext performBlockAndWait:^{
-        [[ContextManager sharedInstance] saveContext:self.managedObjectContext];
-    }];
-}
-
-/**
- Create a new `ReaderSite` or update an existing `ReaderSite`.
-
- @param dict A `RemoteReaderSite` object.
- @return A new or updated, but unsaved, `ReaderSite`.
- */
-- (ReaderSite *)createOrReplaceFromRemoteSite:(RemoteReaderSite *)remoteSite
-{
-    NSString *name = remoteSite.name;
-    if (name.length == 0) {
-        return nil;
-    }
-
-    NSString *path = remoteSite.path;
-    if (path.length == 0) {
-        return nil;
-    }
-
-    ReaderSite *site = [self findSiteByRecordID:remoteSite.recordID];
-    if (site == nil) {
-        site = (ReaderSite *)[NSEntityDescription insertNewObjectForEntityForName:@"ReaderSite"
-                                              inManagedObjectContext:self.managedObjectContext];
-    }
-
-    site.recordID = remoteSite.recordID;
-    site.siteID = remoteSite.siteID;
-    site.feedID = remoteSite.feedID;
-    site.name = remoteSite.name;
-    site.path = remoteSite.path;
-    site.icon = remoteSite.icon;
-    site.isSubscribed = remoteSite.isSubscribed;
-
-    return site;
-}
-
-/**
- Find a specific ReaderSite by its `recordID` property.
-
- @param recordID The unique, cannonical ID of the site.
- @return A matching `ReaderSite` or nil if there is no match.
- */
-- (ReaderSite *)findSiteByRecordID:(NSNumber *)recordID
-{
-    NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ReaderSite"];
-    request.predicate = [NSPredicate predicateWithFormat:@"recordID = %@", recordID];
-
-    NSError *error;
-    NSArray *results = [self.managedObjectContext executeFetchRequest:request error:&error];
-    if (error) {
-        DDLogError(@"%@ error executing fetch request: %@", NSStringFromSelector(_cmd), error);
-        return nil;
-    }
-
-    ReaderSite *site = (ReaderSite *)[results firstObject];
-    return site;
-}
-
-/**
- Fetch all `ReaderSites` currently in Core Data.
-
- @return An array of all `ReaderSites` currently persisted in Core Data.
- */
-- (NSArray *)allSites
-{
-    NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"ReaderSite"];
-
-    NSError *error;
-    NSArray *results = [self.managedObjectContext executeFetchRequest:request error:&error];
-    if (error) {
-        DDLogError(@"%@ error executing fetch request: %@", NSStringFromSelector(_cmd), error);
-        return @[];
-    }
-
-    return results;
-}
 
 #pragma mark - Error messages
 

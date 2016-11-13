@@ -12,17 +12,17 @@ extension WPStyleGuide
     // Styles used by Comments in the Reader
 
     public class func commentTitleFont() -> UIFont {
-        return WPFontManager.openSansBoldFontOfSize(14)
+        return WPFontManager.systemBoldFontOfSize(14)
     }
 
     public class func commentBodyFont() -> UIFont {
-        return WPFontManager.openSansRegularFontOfSize(14)
+        return WPFontManager.systemRegularFontOfSize(14)
     }
 
     public class func commentDTCoreTextOptions() -> NSDictionary {
         let defaultStyles = "blockquote { width: 100%; display: block; font-style: italic; }"
-        let cssStylesheet:DTCSSStylesheet = DTCSSStylesheet(styleBlock: defaultStyles);
-        let fontSize = UIDevice.isPad() ? 16.0 : 14.0;
+        let cssStylesheet:DTCSSStylesheet = DTCSSStylesheet(styleBlock: defaultStyles)
+        let fontSize = UIDevice.isPad() ? 16.0 : 14.0
         return [
             DTDefaultFontFamily             : WPRichTextDefaultFontFamily,
             DTDefaultFontName               : WPRichTextDefaultFontName,
@@ -36,10 +36,10 @@ extension WPStyleGuide
         ] as NSDictionary
     }
 
-    public class func defaultSearchBarTextAttributes(color: UIColor) -> NSDictionary {
+    public class func defaultSearchBarTextAttributes(color: UIColor) -> [String:AnyObject] {
         return [
             NSForegroundColorAttributeName      : color,
-            NSFontAttributeName                 : WPFontManager.openSansRegularFontOfSize(14)
-        ] as NSDictionary
+            NSFontAttributeName                 : WPFontManager.systemRegularFontOfSize(14)
+        ]
     }
 }

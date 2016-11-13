@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "PostServiceRemote.h"
-#import "ServiceRemoteREST.h"
+#import "SiteServiceRemoteWordPressComREST.h"
 
-@interface PostServiceRemoteREST : ServiceRemoteREST <PostServiceRemote>
+@interface PostServiceRemoteREST : SiteServiceRemoteWordPressComREST <PostServiceRemote>
 
 @end

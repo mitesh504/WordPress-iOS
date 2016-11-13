@@ -72,7 +72,7 @@ static NSString * const AttachmentsDictionaryKeyMimeType = @"mime_type";
     });
 
     // Find all the image tags in the content passed.
-    NSArray *matches = [regex matchesInString:content options:NSRegularExpressionCaseInsensitive range:NSMakeRange(0, [content length])];
+    NSArray *matches = [regex matchesInString:content options:0 range:NSMakeRange(0, [content length])];
 
     NSString *firstImageWithNoSize;
     NSInteger currentMaxWidth = FeaturedImageMinimumWidth;
@@ -82,7 +82,13 @@ static NSString * const AttachmentsDictionaryKeyMimeType = @"mime_type";
 
         // Ignore WordPress emoji images
         if ([src rangeOfString:@"/images/core/emoji/"].location != NSNotFound ||
-            [src rangeOfString:@"/wp-includes/images/smilies/"].location != NSNotFound) {
+            [src rangeOfString:@"/wp-includes/images/smilies/"].location != NSNotFound ||
+            [src rangeOfString:@"/wp-content/mu-plugins/wpcom-smileys/"].location != NSNotFound) {
+            continue;
+        }
+
+        // Ignore .svg images since we can't display them in a UIImageView
+        if ([src rangeOfString:@".svg"].location != NSNotFound) {
             continue;
         }
 
@@ -103,6 +109,37 @@ static NSString * const AttachmentsDictionaryKeyMimeType = @"mime_type";
     return imageSrc;
 }
 
++ (NSSet *)searchPostContentForAttachmentIdsInGalleries:(NSString *)content
+{
+    NSMutableSet *resultSet = [NSMutableSet set];
+    // If there is no gallery shortcode in the content, just bail.
+    if (!content || [content rangeOfString:@"[gallery "].location == NSNotFound) {
+        return resultSet;
+    }
+
+    // Get all the things
+    static NSRegularExpression *regexGallery;
+    static dispatch_once_t onceTokenRegexGallery;
+    dispatch_once(&onceTokenRegexGallery, ^{
+        NSError *error;
+        NSString *galleryPattern = @"\\[gallery[^]]+ids=\"([0-9,]*)\"[^]]*\\]";
+        regexGallery = [NSRegularExpression regularExpressionWithPattern:galleryPattern options:NSRegularExpressionCaseInsensitive error:&error];
+    });
+
+    // Find all the gallery shortcodes in the content passed.
+    NSArray *matches = [regexGallery matchesInString:content options:0 range:NSMakeRange(0, [content length])];
+
+    for (NSTextCheckingResult *match in matches) {
+        if (match.numberOfRanges < 2) {
+            continue;
+        }
+        NSString *tag = [content substringWithRange:[match rangeAtIndex:1]];
+        NSSet *tagIds = [self idsFromGallery:tag];
+        [resultSet unionSet:tagIds];
+    }
+    return resultSet;
+}
+
 /**
  Extract the path to an image from an image tag.
  
@@ -119,7 +156,7 @@ static NSString * const AttachmentsDictionaryKeyMimeType = @"mime_type";
         regex = [NSRegularExpression regularExpressionWithPattern:srcPattern options:NSRegularExpressionCaseInsensitive error:&error];
     });
 
-    NSRange srcRng = [regex rangeOfFirstMatchInString:tag options:NSRegularExpressionCaseInsensitive range:NSMakeRange(0, [tag length])];
+    NSRange srcRng = [regex rangeOfFirstMatchInString:tag options:0 range:NSMakeRange(0, [tag length])];
     NSString *src = [tag substringWithRange:srcRng];
     NSCharacterSet *charSet = [NSCharacterSet characterSetWithCharactersInString:@"\"'="];
     NSRange quoteRng = [src rangeOfCharacterFromSet:charSet];
@@ -168,7 +205,7 @@ static NSString * const AttachmentsDictionaryKeyMimeType = @"mime_type";
         regex = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:&error];
     });
     NSInteger length = [content length] - range.location;
-    range = [regex rangeOfFirstMatchInString:content options:NSRegularExpressionCaseInsensitive range:NSMakeRange(range.location, length)];
+    range = [regex rangeOfFirstMatchInString:content options:0 range:NSMakeRange(range.location, length)];
     if (range.location == NSNotFound) {
         return str;
     }
@@ -190,7 +227,7 @@ static NSString * const AttachmentsDictionaryKeyMimeType = @"mime_type";
         return 0;
     }
 
-    NSString *widthStr = [tag substringWithRange:NSMakeRange(startingIdx, [tag length] - rng.location)];
+    NSString *widthStr = [tag substringWithRange:NSMakeRange(startingIdx, rng.location - startingIdx)];
     return [widthStr integerValue];
 }
 
@@ -209,4 +246,16 @@ static NSString * const AttachmentsDictionaryKeyMimeType = @"mime_type";
     return [widthStr integerValue];
 }
 
++ (NSSet *)idsFromGallery:(NSString *)idsStr
+{
+    NSArray * imageIds = [idsStr componentsSeparatedByString:@","];
+    NSMutableSet *result = [NSMutableSet set];
+    for (NSString *imageIdStr in imageIds) {
+        NSNumber *numberId = [imageIdStr numericValue];
+        if (numberId) {
+            [result addObject:numberId];
+        }
+    }
+    return result;
+}
 @end

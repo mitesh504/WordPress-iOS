@@ -1,6 +1,8 @@
 #import "TestContextManager.h"
 #import "ContextManager-Internals.h"
 
+
+
 @implementation TestContextManager
 
 @synthesize persistentStoreCoordinator = _persistentStoreCoordinator;
@@ -18,7 +20,7 @@
 {
     self = [super init];
     if (self) {
-        // Override the shared ContextManager to prevent Simperium from being used
+        // Override the shared ContextManager
         [ContextManager overrideSharedInstance:self];
     }
     return self;

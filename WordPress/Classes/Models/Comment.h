@@ -10,7 +10,7 @@ extern NSString * const CommentUploadFailedNotification;
 
 extern NSString * const CommentStatusPending;
 extern NSString * const CommentStatusApproved;
-extern NSString * const CommentStatusDisapproved;
+extern NSString * const CommentStatusUnapproved;
 extern NSString * const CommentStatusSpam;
 // Draft status is for comments that have not yet been successfully published
 // we can use this status to restore comment replies that the user has written
@@ -42,16 +42,16 @@ extern NSString * const CommentStatusDraft;
 @property (nonatomic, strong) NSString *postTitle;
 @property (nonatomic, strong) NSString *status;
 @property (nonatomic, strong) NSString *type;
-@property (nonatomic) BOOL isLiked;
 @property (nonatomic, strong) NSNumber *likeCount;
-
 @property (nonatomic, strong) NSAttributedString *attributedContent;
+@property (nonatomic) BOOL isLiked;
 @property (nonatomic, assign) BOOL isNew;
-///---------------------
-/// @name Helper methods
-///---------------------
+
+/// Helper methods
+///
 + (NSString *)titleForStatus:(NSString *)status;
 - (NSString *)authorUrlForDisplay;
 - (BOOL)hasAuthorUrl;
+- (BOOL)isApproved;
 
 @end

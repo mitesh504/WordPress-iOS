@@ -2,6 +2,10 @@
 #import "LocalCoreDataService.h"
 #import "Blog.h"
 
+NS_ASSUME_NONNULL_BEGIN
+
+extern NSString *const WordPressMinimumVersion;
+
 @class WPAccount;
 
 @interface BlogService : LocalCoreDataService
@@ -11,7 +15,7 @@
 /**
  Returns the blog that matches with a given blogID
  */
-- (Blog *)blogByBlogId:(NSNumber *)blogID;
+- (nullable Blog *)blogByBlogId:(NSNumber *)blogID;
 
 /**
  Stores the blog's URL in NSUserDefaults, for later retrieval
@@ -22,29 +26,29 @@
  Returns the blog currently flagged as the one last used, or the primary blog,
  or the first blog in an alphanumerically sorted list, whichever is found first.
  */
-- (Blog *)lastUsedOrFirstBlog;
+- (nullable Blog *)lastUsedOrFirstBlog;
 
 /**
  Returns the blog currently flagged as the one last used, or the primary blog,
  or the first blog in an alphanumerically sorted list that supports the given
  feature, whichever is found first.
  */
-- (Blog *)lastUsedOrFirstBlogThatSupports:(BlogFeature)feature;
+- (nullable Blog *)lastUsedOrFirstBlogThatSupports:(BlogFeature)feature;
 
 /**
  Returns the blog currently flaged as the one last used.
  */
-- (Blog *)lastUsedBlog;
+- (nullable Blog *)lastUsedBlog;
 
 /**
  Returns the first blog in an alphanumerically sorted list.
  */
-- (Blog *)firstBlog;
+- (nullable Blog *)firstBlog;
 
 /**
  Returns the default WPCom blog.
  */
-- (Blog *)primaryBlog;
+- (nullable Blog *)primaryBlog;
 
 - (void)syncBlogsForAccount:(WPAccount *)account
                     success:(void (^)())success
@@ -53,6 +57,10 @@
 - (void)syncOptionsForBlog:(Blog *)blog
                    success:(void (^)())success
                    failure:(void (^)(NSError *error))failure;
+
+- (void)syncPostTypesForBlog:(Blog *)blog
+                       success:(void (^)())success
+                       failure:(void (^)(NSError *error))failure;
 
 - (void)syncPostFormatsForBlog:(Blog *)blog
                        success:(void (^)())success
@@ -77,8 +85,8 @@
  *  @param failure a block that in invoked when the update fails.
  */
 - (void)updateSettingsForBlog:(Blog *)blog
-                     success:(void (^)())success
-                     failure:(void (^)(NSError *error))failure;
+                     success:(nullable void (^)())success
+                     failure:(nullable void (^)(NSError *error))failure;
 
 
 /**
@@ -98,7 +106,7 @@
  Also checks if the blog is multi-author.
  Used for instances where the entire blog should be refreshed or initially downloaded.
  */
-- (void)syncBlog:(Blog *)blog;
+- (void)syncBlog:(Blog *)blog completionHandler:(void (^)())completionHandler;
 
 - (BOOL)hasVisibleWPComAccounts;
 
@@ -146,7 +154,7 @@
  @param account the account the blog belongs to
  @return the blog if one was found, otherwise it returns nil
  */
-- (Blog *)findBlogWithXmlrpc:(NSString *)xmlrpc
+- (nullable Blog *)findBlogWithXmlrpc:(NSString *)xmlrpc
                    inAccount:(WPAccount *)account;
 
 /**
@@ -156,7 +164,7 @@
  @param username the blog's username
  @return the blog if one was found, otherwise it returns nil
  */
-- (Blog *)findBlogWithXmlrpc:(NSString *)xmlrpc
+- (nullable Blog *)findBlogWithXmlrpc:(NSString *)xmlrpc
                  andUsername:(NSString *)username;
 
 /**
@@ -167,4 +175,13 @@
  */
 - (Blog *)createBlogWithAccount:(WPAccount *)account;
 
+/**
+ Creates a blank `Blog` object with no account
+
+ @return the newly created blog
+ */
+- (Blog *)createBlog;
+
 @end
+
+NS_ASSUME_NONNULL_END

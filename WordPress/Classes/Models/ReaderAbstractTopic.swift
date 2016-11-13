@@ -7,8 +7,10 @@ import CoreData
     @NSManaged public var posts: [ReaderPost]
 
     // Properties
+    @NSManaged public var preserveForRestoration: Bool
+    @NSManaged public var algorithm: String?
     @NSManaged public var following: Bool
-    @NSManaged public var lastSynced: NSDate
+    @NSManaged public var lastSynced: NSDate?
     @NSManaged public var path: String
     @NSManaged public var showInMenu: Bool
     @NSManaged public var title: String

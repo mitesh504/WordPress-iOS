@@ -12,7 +12,7 @@ class WPRichTextEmbed : UIView, UIWebViewDelegate, WPRichTextMediaAttachment
     var attachmentSize = CGSizeZero
     var documentSize : CGSize {
         get {
-            return webView.scrollView.contentSize;
+            return webView.scrollView.contentSize
         }
     }
     var success : successBlock?
@@ -132,7 +132,7 @@ class WPRichTextEmbed : UIView, UIWebViewDelegate, WPRichTextMediaAttachment
                 "       viewport.setAttribute('content', 'width=available-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');" +
                 "   }" +
                 "}, 100 );"
-            webView.stringByEvaluatingJavaScriptFromString(viewport);
+            webView.stringByEvaluatingJavaScriptFromString(viewport)
 
             webView.frame = bounds
             addSubview(webView)
@@ -145,8 +145,8 @@ class WPRichTextEmbed : UIView, UIWebViewDelegate, WPRichTextMediaAttachment
         success = nil
     }
 
-    func webView(webView: UIWebView, didFailLoadWithError error: NSError?) {
-        DDLogSwift.logError(error?.localizedDescription)
+    func webView(webView: UIWebView, didFailLoadWithError error: NSError) {
+        DDLogSwift.logError(error.localizedDescription)
     }
 
 }

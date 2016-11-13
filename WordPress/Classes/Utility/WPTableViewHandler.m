@@ -1,5 +1,4 @@
 #import "WPTableViewHandler.h"
-#import "WPTableViewSectionHeaderFooterView.h"
 #import "WPTableViewCell.h"
 #import "WordPress-Swift.h"
 
@@ -16,10 +15,8 @@ static CGFloat const DefaultCellHeight = 44.0;
 @property (nonatomic, strong) NSMutableDictionary *cachedRowHeights;
 @property (nonatomic, strong) NSMutableArray *rowsWithInvalidatedHeights;
 @property (nonatomic, readwrite) BOOL isScrolling;
-@property (nonatomic) BOOL refreshingTableViewPreservingOffset;
 @property (nonatomic, strong) NSArray *fetchedResultsBeforeChange;
 @property (nonatomic, strong) NSArray *fetchedResultsIndexPathsBeforeChange;
-@property (nonatomic, strong) NSArray *rowHeightsBeforeChange;
 
 @end
 
@@ -57,12 +54,6 @@ static CGFloat const DefaultCellHeight = 44.0;
 
 #pragma mark - Public Methods
 
-- (void)updateTitleForSection:(NSUInteger)section
-{
-    WPTableViewSectionHeaderFooterView *sectionHeaderView = (WPTableViewSectionHeaderFooterView *)[self tableView:self.tableView viewForHeaderInSection:section];
-    sectionHeaderView.title = [self titleForHeaderInSection:section];
-}
-
 - (void)clearCachedRowHeights
 {
     [self.cachedRowHeights removeAllObjects];
@@ -76,9 +67,12 @@ static CGFloat const DefaultCellHeight = 44.0;
 
 - (void)refreshTableViewPreservingOffset
 {
+    // Buckle up, refill that coffee...
+
+    // Persist some info on the currently visible rows.
     [self preserveRowInfoBeforeContentChanges];
 
-    // Make sure its necessary to account for previously existing rows.
+    // Make sure its necessary to account for currently visible rows.
     // We check here vs in `controllerWillChangeContent:` in order to reload
     // the table view if necessary.
     if ([self.fetchedResultsBeforeChange count] == 0) {
@@ -92,17 +86,18 @@ static CGFloat const DefaultCellHeight = 44.0;
         if ([self.delegate respondsToSelector:@selector(tableViewHandlerDidRefreshTableViewPreservingOffset:)]) {
             [self.delegate tableViewHandlerDidRefreshTableViewPreservingOffset:self];
         }
+        // Don't need to do anything else, get out of here.
         return;
     }
 
-    self.refreshingTableViewPreservingOffset = YES;
-
-    // Get the current visible index paths before reloading data.
+    CGPoint originalOffset = self.tableView.contentOffset;
+    // Get the original visible index paths before reloading data.
     NSArray *visibleIndexPaths = [self.tableView indexPathsForVisibleRows];
-
-    // Get the delta of the current offset and the sum of the preserved row
-    // heights, up to but not including the first visible row.
-    CGFloat offsetHeightDelta = [self contentOffsetAndPreservedRowHeightDelta];
+    // Get the original frames for the visible cells.
+    NSMutableArray <NSValue *> *visibleCellFrames = [NSMutableArray arrayWithCapacity:visibleIndexPaths.count];
+    for (UITableViewCell *cell in self.tableView.visibleCells) {
+        [visibleCellFrames addObject:[NSValue valueWithCGRect:cell.frame]];
+    }
 
     // Notify the delegate that a refresh is about to occur. Allows the delegate
     // perform any final clean up, e.g. dismissing a UIRefreshControl.
@@ -113,14 +108,14 @@ static CGFloat const DefaultCellHeight = 44.0;
     // Clear cached heights and reload the tableview
     [self refreshTableView];
 
-    // Find the indexPath of the first visible object after changes
-    // If the first object was deleted, try the next in line of the previously
+    // Find the new indexPath of the first originally visible object.
+    // If the first object was deleted, try the next in line of the originally
     // visible objects until a match is found.
-    CGFloat heightAdjustment = 0;
     NSIndexPath *newIndexPath = nil;
-    for (NSInteger i = 0; i < [visibleIndexPaths count]; i++) {
-        NSIndexPath *path = visibleIndexPaths[i];
-        NSInteger index = [self.fetchedResultsIndexPathsBeforeChange indexOfObject:path];
+    CGFloat originalCellOriginOffsetDelta = 0;
+    int i = 0;
+    for (NSIndexPath *indexPath in visibleIndexPaths) {
+        NSInteger index = [self.fetchedResultsIndexPathsBeforeChange indexOfObject:indexPath];
         NSManagedObject *obj = self.fetchedResultsBeforeChange[index];
         if (obj.isFault) {
             NSError *error;
@@ -130,38 +125,44 @@ static CGFloat const DefaultCellHeight = 44.0;
             }
         }
         newIndexPath = [self.resultsController indexPathForObject:obj];
-        if (newIndexPath) {
-            break;
-        }
 
-        // Visible cell not found. Add its height to the adjustment.
-        NSNumber *height = self.rowHeightsBeforeChange[i];
-        heightAdjustment += [height floatValue];
+        CGRect originalCellFrame = [[visibleCellFrames objectAtIndex:i] CGRectValue];
+        if (newIndexPath) {
+            // Since we still have one of the originally visible objects,
+            // preserve the original cell frame's origin, relative to the original content offset.
+            originalCellOriginOffsetDelta += originalOffset.y - originalCellFrame.origin.y;
+            break;
+        } else {
+            originalCellOriginOffsetDelta -= originalCellFrame.size.height;
+        }
+        i++;
     }
 
     // If none of the previously visible objects exist, find the first object
     // preceding the first visible cell instead.
     if (!newIndexPath) {
-        heightAdjustment = 0; // Discard any height adjustment.
         newIndexPath = [self indexPathForFirstObjectPrecedingPreservedVisibleIndexPath:[visibleIndexPaths firstObject]];
     }
 
-    if (!newIndexPath) {
-        // Fail safe. If the new index path is nil set the offset to 0
-        [self.tableView setContentOffset:CGPointZero];
+    if (newIndexPath) {
+        // Trigger a scroll to the cell at the newIndexPath, otherwise it won't have a frame.
+        [self.tableView scrollToRowAtIndexPath:newIndexPath atScrollPosition:UITableViewScrollPositionTop animated:NO];
+
+        // With the newIndexPath cell in its new position, grab the cell and calculate
+        // an offset relative to the cell's new origin.
+        UITableViewCell *cell = [self.tableView cellForRowAtIndexPath:newIndexPath];
+        CGPoint newOffset = self.tableView.contentOffset;
+        newOffset.y = cell.frame.origin.y + originalCellOriginOffsetDelta; // Add the original delta, if any.
+
+        // Set the tableview to the new offset
+        [self.tableView setContentOffset:newOffset];
 
     } else {
-        // Now that we know the new location. Get the sum of the row heights for all
-        // preceeding rows. Add the delta and any adjustment.
-        CGFloat rowHeights = [self totalHeightForRowsAboveIndexPath:newIndexPath];
-        rowHeights += (offsetHeightDelta + heightAdjustment);
-        // Set the tableview to the new offset
-        CGPoint newOffset = CGPointMake([self.tableView contentOffset].x, rowHeights);
-        [self.tableView setContentOffset:newOffset];
+        // Fail safe. If the new index path was nil set the offset to 0, or the top of the tableView.
+        [self.tableView setContentOffset:CGPointZero];
     }
 
     // Clean up
-    self.refreshingTableViewPreservingOffset = NO;
     [self discardPreservedRowInfo];
 
     // Notify the delegate that a refresh has occured. Allows the delegate
@@ -170,6 +171,8 @@ static CGFloat const DefaultCellHeight = 44.0;
     if ([self.delegate respondsToSelector:@selector(tableViewHandlerDidRefreshTableViewPreservingOffset:)]) {
         [self.delegate tableViewHandlerDidRefreshTableViewPreservingOffset:self];
     }
+
+    // Whew, take a breather.
 }
 
 
@@ -192,7 +195,7 @@ static CGFloat const DefaultCellHeight = 44.0;
     }
 
     NSMutableDictionary *cachedRowHeights = [NSMutableDictionary dictionary];
-    for (NSObject *obj in self.resultsController.fetchedObjects) {
+    for (NSObject<NSFetchRequestResult> *obj in self.resultsController.fetchedObjects) {
         NSIndexPath *indexPath = [self.resultsController indexPathForObject:obj];
         if (!indexPath) {
             continue;
@@ -281,14 +284,6 @@ static CGFloat const DefaultCellHeight = 44.0;
     return nil;
 }
 
-- (NSString *)titleForHeaderInSection:(NSInteger)section
-{
-    if ([self.delegate respondsToSelector:@selector(titleForHeaderInSection:)]) {
-        return [self.delegate titleForHeaderInSection:section];
-    }
-    return nil;
-}
-
 - (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if ([self.delegate respondsToSelector:@selector(tableView:canEditRowAtIndexPath:)]) {
@@ -310,6 +305,15 @@ static CGFloat const DefaultCellHeight = 44.0;
         return [self.delegate tableView:tableView editingStyleForRowAtIndexPath:indexPath];
     }
     return UITableViewCellEditingStyleNone;
+}
+
+- (NSArray *)tableView:(UITableView *)tableView editActionsForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:editActionsForRowAtIndexPath:)]) {
+        return [self.delegate tableView:tableView editActionsForRowAtIndexPath:indexPath];
+    }
+    
+    return nil;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
@@ -364,12 +368,6 @@ static CGFloat const DefaultCellHeight = 44.0;
         }
     }
 
-    if (self.refreshingTableViewPreservingOffset) {
-        // when refreshing this way we need to calculate actual heights not estimated heights.
-        height = [self tableView:tableView heightForRowAtIndexPath:indexPath];
-        return height;
-    }
-
     if ([self.delegate respondsToSelector:@selector(tableView:estimatedHeightForRowAtIndexPath:)]) {
         height = [self.delegate tableView:tableView estimatedHeightForRowAtIndexPath:indexPath];
     }
@@ -420,54 +418,6 @@ static CGFloat const DefaultCellHeight = 44.0;
     }
 }
 
-- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
-{
-    if ([self.delegate respondsToSelector:@selector(tableView:viewForHeaderInSection:)]) {
-        return [self.delegate tableView:tableView viewForHeaderInSection:section];
-    }
-
-    WPTableViewSectionHeaderFooterView *header;
-    if ([self.sectionHeaders count] > section) {
-        header = [self.sectionHeaders objectAtIndex:section];
-    } else {
-        header = [[WPTableViewSectionHeaderFooterView alloc] initWithReuseIdentifier:nil style:WPTableViewSectionStyleHeader];
-        [self.sectionHeaders addObject:header];
-    }
-
-    header.title = [self titleForHeaderInSection:section];
-    return header;
-}
-
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
-{
-    if ([self.delegate respondsToSelector:@selector(tableView:heightForHeaderInSection:)]) {
-        return [self.delegate tableView:tableView heightForHeaderInSection:section];
-    }
-
-    NSString *title = [self titleForHeaderInSection:section];
-    return [WPTableViewSectionHeaderFooterView heightForHeader:title width:CGRectGetWidth(self.tableView.bounds)];
-}
-
-- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
-{
-    if ([self.delegate respondsToSelector:@selector(tableView:heightForFooterInSection:)]) {
-        return [self.delegate tableView:tableView heightForFooterInSection:section];
-    }
-
-    // Remove footer height for all but last section
-    return section == [[self.resultsController sections] count] - 1 ? UITableViewAutomaticDimension : 1.0;
-}
-
-
-- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
-{
-    if ([self.delegate respondsToSelector:@selector(tableView:viewForFooterInSection:)]) {
-        return [self.delegate tableView:tableView viewForFooterInSection:section];
-    }
-
-    return nil;
-}
-
 - (void)tableView:(UITableView *)tableView didEndDisplayingCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath
 {
     if ([self.delegate respondsToSelector:@selector(tableView:didEndDisplayingCell:forRowAtIndexPath:)]) {
@@ -475,6 +425,55 @@ static CGFloat const DefaultCellHeight = 44.0;
     }
 }
 
+- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:viewForHeaderInSection:)]) {
+        return [self.delegate tableView:tableView viewForHeaderInSection:section];
+    }
+    return nil;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:heightForHeaderInSection:)]) {
+        return [self.delegate tableView:tableView heightForHeaderInSection:section];
+    }
+    return UITableViewAutomaticDimension;
+}
+
+- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:viewForFooterInSection:)]) {
+        return [self.delegate tableView:tableView viewForFooterInSection:section];
+    }
+    return nil;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:heightForFooterInSection:)]) {
+        return [self.delegate tableView:tableView heightForFooterInSection:section];
+    }
+    return UITableViewAutomaticDimension;
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayHeaderView:(UIView *)view forSection:(NSInteger)section
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:willDisplayHeaderView:forSection:)]) {
+        [self.delegate tableView:tableView willDisplayHeaderView:view forSection:section];
+    } else {
+        [WPStyleGuide configureTableViewSectionHeader:view];
+    }
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayFooterView:(UIView *)view forSection:(NSInteger)section
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:willDisplayFooterView:forSection:)]) {
+        [self.delegate tableView:tableView willDisplayFooterView:view forSection:section];
+    } else {
+        [WPStyleGuide configureTableViewSectionFooter:view];
+    }
+}
 
 #pragma mark - TableView Datasource Methods
 
@@ -496,10 +495,20 @@ static CGFloat const DefaultCellHeight = 44.0;
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section
 {
+    if ([self.delegate respondsToSelector:@selector(tableView:titleForHeaderInSection:)]) {
+        return [self.delegate tableView:tableView titleForHeaderInSection:section];
+    }
     id <NSFetchedResultsSectionInfo> sectionInfo = [[self.resultsController sections] objectAtIndex:section];
     return [sectionInfo name];
 }
 
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
+{
+    if ([self.delegate respondsToSelector:@selector(tableView:titleForFooterInSection:)]) {
+        return [self.delegate tableView:tableView titleForFooterInSection:section];
+    }
+    return nil;
+}
 
 #pragma mark - UIScrollViewDelegate Methods
 
@@ -519,11 +528,25 @@ static CGFloat const DefaultCellHeight = 44.0;
     }
 }
 
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView
+{
+    if ([self.delegate respondsToSelector:@selector(scrollViewDidScroll:)]) {
+        [self.delegate scrollViewDidScroll:scrollView];
+    }
+}
+
 - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate
 {
     self.isScrolling = decelerate;
     if ([self.delegate respondsToSelector:@selector(scrollViewDidEndDragging:willDecelerate:)]) {
         [self.delegate scrollViewDidEndDragging:scrollView willDecelerate:(BOOL)decelerate];
+    }
+}
+
+- (void)scrollViewWillEndDragging:(UIScrollView *)scrollView withVelocity:(CGPoint)velocity targetContentOffset:(inout CGPoint *)targetContentOffset
+{
+    if ([self.delegate respondsToSelector:@selector(scrollViewWillEndDragging:withVelocity:targetContentOffset:)]) {
+        [self.delegate scrollViewWillEndDragging:scrollView withVelocity:velocity targetContentOffset:targetContentOffset];
     }
 }
 
@@ -662,7 +685,6 @@ static CGFloat const DefaultCellHeight = 44.0;
     NSIndexPath *lastVisibleIndexPath = [[self.tableView indexPathsForVisibleRows] lastObject];
 
     NSMutableArray *indexPaths = [NSMutableArray array];
-    NSMutableArray *rowHeights = [NSMutableArray array];
     for (NSManagedObject *object in self.fetchedResultsBeforeChange) {
         NSIndexPath *indexPath = [self.resultsController indexPathForObject:object];
         if (!indexPath) {
@@ -673,46 +695,10 @@ static CGFloat const DefaultCellHeight = 44.0;
         if (order == NSOrderedDescending) {
             continue;
         }
-
         [indexPaths addObject:indexPath];
-
-        CGFloat height;
-        // Use a cached height if we have one.
-        if (self.cacheRowHeights && [[self.cachedRowHeights allKeys] containsObject:indexPath]) {
-            height = [[self.cachedRowHeights objectForKey:indexPath] floatValue];
-        } else {
-
-            height = [self tableView:self.tableView heightForRowAtIndexPath:indexPath];
-        }
-        [rowHeights addObject:@(height)];
     }
 
-    self.rowHeightsBeforeChange = rowHeights;
     self.fetchedResultsIndexPathsBeforeChange = indexPaths;
-}
-
-- (CGFloat)contentOffsetAndPreservedRowHeightDelta
-{
-    // Get the current scroll offset
-    CGPoint offset = [[self tableView] contentOffset];
-
-    NSArray *visibleIndexPaths = [self.tableView indexPathsForVisibleRows];
-    NSIndexPath *firstVisibleIndexPath = [visibleIndexPaths firstObject];
-
-    // Get the sum of the height of all cells up to but not including the first visible cell
-    CGFloat rowHeights = 0;
-    for (NSInteger i = 0; i < [self.fetchedResultsIndexPathsBeforeChange count]; i++) {
-        NSIndexPath *path = self.fetchedResultsIndexPathsBeforeChange[i];
-        if ([firstVisibleIndexPath compare:path] == NSOrderedDescending) {
-            NSNumber *height = self.rowHeightsBeforeChange[i];
-            rowHeights += [height floatValue];
-        }
-    }
-
-    // Get the delta between the sum of the row heights and the current offset
-    // offset.y should be the greater of the two.
-    CGFloat offsetHeightDelta = offset.y - rowHeights;
-    return offsetHeightDelta;
 }
 
 - (NSIndexPath *)indexPathForFirstObjectPrecedingPreservedVisibleIndexPath:(NSIndexPath *)indexPath
@@ -732,26 +718,8 @@ static CGFloat const DefaultCellHeight = 44.0;
     return nil;
 }
 
-- (CGFloat)totalHeightForRowsAboveIndexPath:(NSIndexPath *)indexPath
-{
-    // Get the sum of the row heights for all preceeding rows.
-    NSManagedObject *lastObject = [self.resultsController objectAtIndexPath:indexPath];
-    NSInteger index = [[self.resultsController fetchedObjects] indexOfObject:lastObject];
-    CGFloat rowHeights = 0;
-    for (NSInteger i = 0; i < index; i++) {
-        NSManagedObject *object = [self.resultsController.fetchedObjects objectAtIndex:i];
-        NSIndexPath *path = [self.resultsController indexPathForObject:object];
-
-        // Get the height from the delegate method so we can respect height caching.
-        CGFloat height = [self tableView:self.tableView heightForRowAtIndexPath:path];
-        rowHeights += height;
-    }
-    return rowHeights;
-}
-
 - (void)discardPreservedRowInfo
 {
-    self.rowHeightsBeforeChange = nil;
     self.fetchedResultsBeforeChange = nil;
     self.fetchedResultsIndexPathsBeforeChange = nil;
 }

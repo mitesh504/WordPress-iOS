@@ -1,36 +1,37 @@
 import Foundation
 import WordPressShared
 
-@objc public class NoteBlockTextTableViewCell : NoteBlockTableViewCell, RichTextViewDataSource, RichTextViewDelegate
+
+class NoteBlockTextTableViewCell: NoteBlockTableViewCell, RichTextViewDataSource, RichTextViewDelegate
 {
     // MARK: - Public Properties
-    public var onUrlClick: ((NSURL) -> Void)?
-    public var onAttachmentClick: ((NSTextAttachment) -> Void)?
-    public var attributedText: NSAttributedString? {
+    var onUrlClick: (NSURL -> Void)?
+    var onAttachmentClick: (NSTextAttachment -> Void)?
+    var attributedText: NSAttributedString? {
         set {
             textView.attributedText = newValue
-            setNeedsLayout()
+            invalidateIntrinsicContentSize()
         }
         get {
             return textView.attributedText
         }
     }
-    
-    public override var isBadge: Bool {
+
+    override var isBadge: Bool {
         didSet {
             backgroundColor = WPStyleGuide.Notifications.blockBackgroundColorForRichText(isBadge)
         }
     }
-    
-    public var linkColor: UIColor? {
+
+    var linkColor: UIColor? {
         didSet {
             if let unwrappedLinkColor = linkColor {
                 textView.linkTextAttributes = [NSForegroundColorAttributeName : unwrappedLinkColor]
             }
         }
     }
-    
-    public var dataDetectors: UIDataDetectorTypes {
+
+    var dataDetectors: UIDataDetectorTypes {
         set {
             textView.dataDetectorTypes = newValue ?? .None
         }
@@ -38,12 +39,8 @@ import WordPressShared
             return textView.dataDetectorTypes
         }
     }
-    
-    public var labelPadding: UIEdgeInsets {
-        return self.dynamicType.defaultLabelPadding
-    }
-    
-    public var isTextViewSelectable: Bool {
+
+    var isTextViewSelectable: Bool {
         set {
             textView.selectable = newValue
         }
@@ -52,7 +49,7 @@ import WordPressShared
         }
     }
 
-    public var isTextViewClickable: Bool {
+    var isTextViewClickable: Bool {
         set {
             textView.userInteractionEnabled = newValue
         }
@@ -60,52 +57,53 @@ import WordPressShared
             return textView.userInteractionEnabled
         }
     }
-    
+
     // MARK: - View Methods
-    public override func awakeFromNib() {
+    override func awakeFromNib() {
         super.awakeFromNib()
-                
-        backgroundColor             = WPStyleGuide.Notifications.blockBackgroundColor
-        selectionStyle              = .None
-        
+
+        backgroundColor = WPStyleGuide.Notifications.blockBackgroundColor
+        selectionStyle = .None
+
         assert(textView != nil)
-        textView.contentInset       = UIEdgeInsetsZero
+        textView.contentInset = UIEdgeInsetsZero
         textView.textContainerInset = UIEdgeInsetsZero
-        textView.backgroundColor    = UIColor.clearColor()
-        textView.editable           = false
-        textView.selectable         = true
-        textView.dataDetectorTypes  = .None
-        textView.dataSource         = self
-        textView.delegate           = self
-        
+        textView.backgroundColor = UIColor.clearColor()
+        textView.editable = false
+        textView.selectable = true
+        textView.dataDetectorTypes = .None
+        textView.dataSource = self
+        textView.delegate = self
+
         textView.translatesAutoresizingMaskIntoConstraints = false
+
+        // TODO:
+        // Nuke this snippet once Readability is in place. REF. #6085
+        let maxWidth = WPTableViewFixedWidth
+        let padding = self.dynamicType.defaultLabelPadding
+        textView.preferredMaxLayoutWidth = maxWidth - padding.left - padding.right
     }
-    
-    public override func layoutSubviews() {
-        // Calculate the TextView's width, before hitting layoutSubviews!
-        textView.preferredMaxLayoutWidth = min(bounds.width, self.dynamicType.maxWidth) - labelPadding.left - labelPadding.right
-        super.layoutSubviews()
-    }
-        
+
+
     // MARK: - RichTextView Data Source
-    public func textView(textView: UITextView, shouldInteractWithURL URL: NSURL, inRange characterRange: NSRange) -> Bool {
+    func textView(textView: UITextView, shouldInteractWithURL URL: NSURL, inRange characterRange: NSRange) -> Bool {
         onUrlClick?(URL)
         return false
     }
-    
-    public func textView(textView: UITextView, didPressLink link: NSURL) {
+
+    func textView(textView: UITextView, didPressLink link: NSURL) {
         onUrlClick?(link)
     }
-    
-    public func textView(textView: UITextView, shouldInteractWithTextAttachment textAttachment: NSTextAttachment, inRange characterRange: NSRange) -> Bool {
+
+    func textView(textView: UITextView, shouldInteractWithTextAttachment textAttachment: NSTextAttachment, inRange characterRange: NSRange) -> Bool {
         onAttachmentClick?(textAttachment)
         return false
     }
-    
+
+
     // MARK: - Constants
-    public static let maxWidth            = WPTableViewFixedWidth
-    public static let defaultLabelPadding = UIEdgeInsets(top: 0.0, left: 12.0, bottom: 0.0, right: 12.0)
-    
+    static let defaultLabelPadding = UIEdgeInsets(top: 0.0, left: 12.0, bottom: 0.0, right: 12.0)
+
     // MARK: - IBOutlets
     @IBOutlet private weak var textView: RichTextView!
 }

@@ -1,7 +1,10 @@
 #import "HelpShiftUtils.h"
 #import <Mixpanel/MPTweakInline.h>
-#import "WordPressComApiCredentials.h"
-#import <Helpshift/Helpshift.h>
+#import "ApiCredentials.h"
+#import <Helpshift/HelpshiftCore.h>
+#import <Helpshift/HelpshiftSupport.h>
+#import "WPAccount.h"
+#import "Blog.h"
 
 NSString *const UserDefaultsHelpshiftEnabled = @"wp_helpshift_enabled";
 NSString *const UserDefaultsHelpshiftWasUsed = @"wp_helpshift_used";
@@ -9,7 +12,7 @@ NSString *const HelpshiftUnreadCountUpdatedNotification = @"HelpshiftUnreadCount
 // This delay is required to give some time to Mixpanel to update the remote variable
 CGFloat const HelpshiftFlagCheckDelay = 10.0;
 
-@interface HelpshiftUtils () <HelpshiftDelegate>
+@interface HelpshiftUtils () <HelpshiftSupportDelegate>
 
 @property (nonatomic, assign) NSInteger unreadNotificationCount;
 
@@ -31,9 +34,15 @@ CGFloat const HelpshiftFlagCheckDelay = 10.0;
 
 + (void)setup
 {
-    [[Helpshift sharedInstance] setDelegate:[HelpshiftUtils sharedInstance]];
-    [Helpshift installForApiKey:[WordPressComApiCredentials helpshiftAPIKey] domainName:[WordPressComApiCredentials helpshiftDomainName] appID:[WordPressComApiCredentials helpshiftAppId]];
-
+    [HelpshiftCore initializeWithProvider:[HelpshiftSupport sharedInstance]];
+    [[HelpshiftSupport sharedInstance] setDelegate:[HelpshiftUtils sharedInstance]];
+    [HelpshiftCore installForApiKey:[ApiCredentials helpshiftAPIKey] domainName:[ApiCredentials helpshiftDomainName] appID:[ApiCredentials helpshiftAppId]];
+    
+    // Lets enable Helpshift by default on startup because the time to get data back from Mixpanel
+    // can result in users who first launch the app being unable to contact us.
+    [[HelpshiftUtils sharedInstance] enableHelpshift];
+    
+    
     // We want to make sure Mixpanel updates the remote variable before we check for the flag
     [[HelpshiftUtils sharedInstance] performSelector:@selector(checkIfHelpshiftShouldBeEnabled)
                                           withObject:nil
@@ -44,31 +53,45 @@ CGFloat const HelpshiftFlagCheckDelay = 10.0;
 {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults registerDefaults:@{UserDefaultsHelpshiftEnabled:@NO}];
-
+    
     BOOL userHasUsedHelpshift = [defaults boolForKey:UserDefaultsHelpshiftWasUsed];
-
+    
     if (userHasUsedHelpshift) {
         [defaults setBool:YES forKey:UserDefaultsHelpshiftEnabled];
         [defaults synchronize];
         return;
     }
-
-    if (MPTweakValue(@"Helpshift Enabled", NO)) {
-        DDLogInfo(@"Helpshift Enabled");
-
-        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-        [defaults setBool:YES forKey:UserDefaultsHelpshiftEnabled];
-        [defaults synchronize];
-
-        // if the Helpshift is enabled we want to refresh unread count, since the check happens with a delay
-        [HelpshiftUtils refreshUnreadNotificationCount];
+    
+    if (MPTweakValue(@"Helpshift Enabled", YES)) {
+        [self enableHelpshift];
     } else {
-        DDLogInfo(@"Helpshift Disabled");
-
-        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-        [defaults setBool:NO forKey:UserDefaultsHelpshiftEnabled];
-        [defaults synchronize];
+        [self disableHelpshiftIfNotAlreadyUsed];
     }
+}
+
+- (void)enableHelpshift
+{
+    DDLogInfo(@"Helpshift Enabled");
+    
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:YES forKey:UserDefaultsHelpshiftEnabled];
+    [defaults synchronize];
+    
+    // if the Helpshift is enabled we want to refresh unread count, since the check happens with a delay
+    [HelpshiftUtils refreshUnreadNotificationCount];
+}
+
+- (void)disableHelpshiftIfNotAlreadyUsed
+{
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:UserDefaultsHelpshiftWasUsed]) {
+        return;
+    }
+    
+    DDLogInfo(@"Helpshift Disabled");
+    
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setBool:NO forKey:UserDefaultsHelpshiftEnabled];
+    [defaults synchronize];
 }
 
 + (BOOL)isHelpshiftEnabled
@@ -83,12 +106,26 @@ CGFloat const HelpshiftFlagCheckDelay = 10.0;
 
 + (void)refreshUnreadNotificationCount
 {
-    [[Helpshift sharedInstance] getNotificationCountFromRemote:YES];
+    [HelpshiftSupport getNotificationCountFromRemote:YES];
 }
 
-#pragma mark - Helpshift Delegate
++ (NSArray<NSString *> *)planTagsForAccount:(WPAccount *)account
+{
+    NSMutableSet<NSString *> *tags = [NSMutableSet set];
+    for (Blog *blog in account.blogs) {
+        if (blog.planID == nil) {
+            continue;
+        }
+        NSString *tag = [NSString stringWithFormat:@"plan:%@", blog.planID];
+        [tags addObject:tag];
+    }
 
-- (void)didReceiveInAppNotificationWithMessageCount:(NSInteger)count;
+    return [tags allObjects];
+}
+
+#pragma mark - HelpshiftSupport Delegate
+
+- (void)didReceiveInAppNotificationWithMessageCount:(NSInteger)count
 {
     if (count > 0) {
         [WPAnalytics track:WPAnalyticsStatSupportReceivedResponseFromSupport];

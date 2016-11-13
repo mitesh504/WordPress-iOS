@@ -72,7 +72,7 @@ static const UIEdgeInsets ReplyAndLikeButtonEdgeInsets = {0.0f, 4.0f, 0.0f, -4.0
 
 - (void)refreshMediaLayout
 {
-    [self.textContentView refreshMediaLayout];
+    [self.textContentView refreshLayout];
 }
 
 - (void)preventPendingMediaLayout:(BOOL)prevent
@@ -188,7 +188,7 @@ static const UIEdgeInsets ReplyAndLikeButtonEdgeInsets = {0.0f, 4.0f, 0.0f, -4.0
                                                                     attribute:NSLayoutAttributeHeight
                                                                     relatedBy:NSLayoutRelationEqual
                                                                        toItem:nil
-                                                                    attribute:nil
+                                                                    attribute:0
                                                                    multiplier:1.0
                                                                      constant:CommentContentViewMetaHeight];
     [self addConstraint:self.commentMetaHeightConstraint];
@@ -370,7 +370,7 @@ static const UIEdgeInsets ReplyAndLikeButtonEdgeInsets = {0.0f, 4.0f, 0.0f, -4.0
     [self.authorButton setTitle:[self.contentProvider authorForDisplay] forState:UIControlStateHighlighted];
     [self.authorButton setTitle:[self.contentProvider authorForDisplay] forState:UIControlStateDisabled];
 
-    if ([self.contentProvider respondsToSelector:@selector(authorURL)] && [self.contentProvider authorURL]) {
+    if ([self.contentProvider respondsToSelector:@selector(authorURL)]) {
         self.authorButton.enabled = ([[[self.contentProvider authorURL] absoluteString] length] > 0);
     }
 

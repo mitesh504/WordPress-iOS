@@ -10,13 +10,13 @@
 #import "WPNoResultsView.h"
 #import "UIView+Subviews.h"
 #import "ContextManager.h"
+#import "WPStyleGuide.h"
 
 
 static CGRect const CommentsActivityFooterFrame                 = {0.0, 0.0, 30.0, 30.0};
 static CGFloat const CommentsActivityFooterHeight               = 50.0;
 static NSInteger const CommentsRefreshRowPadding                = 4;
 static NSInteger const CommentsFetchBatchSize                   = 10;
-static NSTimeInterval const CommentsRefreshTimeoutInSeconds     = 60 * 5; // 5 minutes
 
 static NSString *CommentsReuseIdentifier                        = @"CommentsReuseIdentifier";
 static NSString *CommentsLayoutIdentifier                       = @"CommentsLayoutIdentifier";
@@ -64,8 +64,6 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
     [self configureTableViewFooter];
     [self configureTableViewHandler];
     [self configureTableViewLayoutCell];
-    
-    [self refreshAndSyncIfNeeded];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -77,6 +75,8 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
     
     // Refresh the UI
     [self refreshNoResultsView];
+
+    [self refreshAndSyncIfNeeded];
 }
 
 - (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation duration:(NSTimeInterval)duration
@@ -140,7 +140,6 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
 
 - (void)configureTableView
 {
-    self.tableView.separatorStyle = UITableViewCellSeparatorStyleNone;
     self.tableView.accessibilityIdentifier  = @"Comments Table";
     [WPStyleGuide configureColorsForView:self.view andTableView:self.tableView];
     
@@ -154,11 +153,8 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
 - (void)configureTableViewFooter
 {
     // Notes:
-    //  -   iPhone: Hide the cellSeparators, when the table is empty
-    //  -   iPad: contentInset breaks tableSectionViews
-    CGRect footerFrame = UIDevice.isPad ? WPTableFooterPadFrame : CGRectZero;
-    
-    self.tableView.tableFooterView = [[UIView alloc] initWithFrame:footerFrame];
+    //  -  Hide the cellSeparators, when the table is empty
+    self.tableView.tableFooterView = [[UIView alloc] initWithFrame:CGRectZero];
 }
 
 - (void)configureTableViewLayoutCell
@@ -174,33 +170,7 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
     self.tableViewHandler                   = tableViewHandler;
 }
 
-
 #pragma mark - UITableViewDelegate Methods
-
-- (UIView *)tableView:(UITableView *)tableView viewForHeaderInSection:(NSInteger)section
-{
-    return [UIView new];
-}
-
-- (CGFloat)tableView:(UITableView *)tableView heightForHeaderInSection:(NSInteger)section
-{
-    return [UIDevice isPad] ? UITableViewAutomaticDimension : CGFLOAT_MIN;
-}
-
-- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
-{
-    return nil;
-}
-
-- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
-{
-    return [UIView new];
-}
-
-- (CGFloat)tableView:(UITableView *)tableView heightForFooterInSection:(NSInteger)section
-{
-    return CGFLOAT_MIN;
-}
 
 - (CGFloat)tableView:(UITableView *)tableView estimatedHeightForRowAtIndexPath:(NSIndexPath *)indexPath
 {
@@ -261,6 +231,88 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
     vc.comment                  = comment;
         
     [self.navigationController pushViewController:vc animated:YES];
+}
+
+
+#pragma mark - Comment Actions
+
+- (BOOL)tableView:(UITableView *)tableView canEditRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    return YES;
+}
+
+- (UITableViewCellEditingStyle)tableView:(UITableView *)tableView editingStyleForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    return UITableViewCellEditingStyleDelete;
+}
+
+- (NSArray *)tableView:(UITableView *)tableView editActionsForRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    Comment *comment = [self.tableViewHandler.resultsController objectAtIndexPath:indexPath];
+    NSMutableArray *actions = [NSMutableArray array];
+    __typeof(self) __weak weakSelf = self;
+    
+    NSParameterAssert(comment);
+    
+    UITableViewRowAction *trash = [UITableViewRowAction rowActionWithStyle:UITableViewRowActionStyleDestructive
+                                                                     title:NSLocalizedString(@"Trash", @"Trashes a comment")
+                                                                   handler:^(UITableViewRowAction * _Nonnull action, NSIndexPath * _Nonnull indexPath) {
+                                                                       [weakSelf deleteComment:comment];
+                                                                   }];
+    trash.backgroundColor = [WPStyleGuide errorRed];
+    [actions addObject:trash];
+    
+    if (comment.isApproved) {
+        UITableViewRowAction *unapprove = [UITableViewRowAction rowActionWithStyle:UITableViewRowActionStyleNormal
+                                                                             title:NSLocalizedString(@"Unapprove", @"Unapproves a Comment")
+                                                                           handler:^(UITableViewRowAction * _Nonnull action, NSIndexPath * _Nonnull indexPath) {
+                                                                               [weakSelf unapproveComment:comment];
+                                                                           }];
+        
+        unapprove.backgroundColor = [WPStyleGuide grey];
+        [actions addObject:unapprove];
+    } else {
+        UITableViewRowAction *approve = [UITableViewRowAction rowActionWithStyle:UITableViewRowActionStyleNormal
+                                                                           title:NSLocalizedString(@"Approve", @"Approves a Comment")
+                                                                         handler:^(UITableViewRowAction * _Nonnull action, NSIndexPath * _Nonnull indexPath) {
+                                                                             [weakSelf approveComment:comment];
+                                                                         }];
+        
+        approve.backgroundColor = [WPStyleGuide wordPressBlue];
+        [actions addObject:approve];
+    }
+    
+    return actions;
+}
+
+- (void)approveComment:(Comment *)comment
+{
+    CommentService *service = [[CommentService alloc] initWithManagedObjectContext:self.managedObjectContext];
+        
+    [self.tableView setEditing:NO animated:YES];
+    [service approveComment:comment success:nil failure:^(NSError *error) {
+        DDLogError(@"#### Error approving comment: %@", error);
+    }];
+}
+
+- (void)unapproveComment:(Comment *)comment
+{
+    CommentService *service = [[CommentService alloc] initWithManagedObjectContext:self.managedObjectContext];
+    
+    [self.tableView setEditing:NO animated:YES];
+    [service unapproveComment:comment success:nil failure:^(NSError *error) {
+        DDLogError(@"#### Error unapproving comment: %@", error);
+    }];
+}
+
+- (void)deleteComment:(Comment *)comment
+{
+    CommentService *service = [[CommentService alloc] initWithManagedObjectContext:self.managedObjectContext];
+    
+    [self.tableView setEditing:NO animated:YES];
+    [service deleteComment:comment success:nil failure:^(NSError *error) {
+        DDLogError(@"Error deleting comment: %@", error);
+    }];
 }
 
 
@@ -339,10 +391,10 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
         }
         
         [commentService syncCommentsForBlog:blogInContext
-                                    success:^{
+                                    success:^(BOOL hasMore) {
                                                 if (success) {
                                                     dispatch_async(dispatch_get_main_queue(), ^{
-                                                        success(true);
+                                                        success(hasMore);
                                                     });
                                                 }
                                     }
@@ -403,8 +455,7 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
 
 - (void)refreshAndSyncIfNeeded
 {
-    NSDate *lastSynced = self.blog.lastCommentsSync;
-    if (lastSynced == nil || ABS(lastSynced.timeIntervalSinceNow) > CommentsRefreshTimeoutInSeconds) {
+    if ([CommentService shouldRefreshCacheFor:self.blog]) {
         [self.syncHelper syncContent];
     }
 }
@@ -441,8 +492,9 @@ static NSString *CommentsLayoutIdentifier                       = @"CommentsLayo
     }
     
     // Display NoResultsView
-    [self.noResultsView centerInSuperview];
-    
+    self.noResultsView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.tableView pinSubviewAtCenter:self.noResultsView];
+
     if (shouldPerformAnimation) {
         [self.noResultsView fadeInWithAnimation];
     }

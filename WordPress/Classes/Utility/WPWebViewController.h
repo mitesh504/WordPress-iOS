@@ -4,7 +4,7 @@
 
 #pragma mark - WPWebViewController
 
-@interface WPWebViewController : UIViewController
+@interface WPWebViewController : UIViewController<UIWebViewDelegate>
 
 /**
  *	@brief		Represents the Endpoint URL to render
@@ -35,6 +35,21 @@
  *	@brief		Optionally scrolls the endpoint to the bottom of the screen, automatically.
  */
 @property (nonatomic, assign) BOOL      shouldScrollToBottom;
+
+/**
+ *	@brief		Optionally suppresses navigation and sharing
+ */
+@property (nonatomic, assign) BOOL      secureInteraction;
+
+/**
+ *  @brief  When true adds a custom referrer to NSURLRequest.
+ */
+@property (nonatomic, assign) BOOL addsWPComReferrer;
+
+/**
+ *	@brief		Dismiss modal presentation
+ */
+- (IBAction)dismiss;
 
 /**
  *	@brief      Helper method to initialize a WebViewController Instance

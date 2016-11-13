@@ -23,6 +23,7 @@
 @dynamic videopressGUID;
 @dynamic localThumbnailURL;
 @dynamic remoteThumbnailURL;
+@dynamic postID;
 
 @synthesize unattached;
 
@@ -71,18 +72,23 @@
 
 - (void)setMediaType:(MediaType)mediaType
 {
+    self.mediaTypeString = [[self class] stringFromMediaType:mediaType];    
+}
+
++ (NSString *)stringFromMediaType:(MediaType)mediaType
+{
     switch (mediaType) {
         case MediaTypeImage:
-            self.mediaTypeString = @"image";
+            return @"image";
             break;
         case MediaTypeVideo:
-            self.mediaTypeString = @"video";
+            return @"video";
             break;
         case MediaTypePowerpoint:
-            self.mediaTypeString = @"powerpoint";
+            return @"powerpoint";
             break;
         case MediaTypeDocument:
-            self.mediaTypeString = @"document";
+            return @"document";
             break;
     }
 }
@@ -129,13 +135,17 @@
     return [Media titleForRemoteStatus:self.remoteStatusNumber];
 }
 
-- (void)prepareForDeletion {
+- (void)prepareForDeletion
+{
     NSError *error = nil;
-    if (![[NSFileManager defaultManager] removeItemAtPath:self.absoluteLocalURL error:&error]) {
-        DDLogError(@"Error removing media files:%@", error);
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    if ([fileManager fileExistsAtPath:self.absoluteLocalURL] &&
+        ![fileManager removeItemAtPath:self.absoluteLocalURL error:&error]) {
+        DDLogInfo(@"Error removing media files:%@", error);
     }
-    if (![[NSFileManager defaultManager] removeItemAtPath:self.absoluteThumbnailLocalURL error:&error]) {
-        DDLogError(@"Error removing media files:%@", error);
+    if ([fileManager fileExistsAtPath:self.absoluteThumbnailLocalURL] &&
+        ![fileManager removeItemAtPath:self.absoluteThumbnailLocalURL error:&error]) {
+        DDLogInfo(@"Error removing media files:%@", error);
     }
     [super prepareForDeletion];
 }
@@ -199,36 +209,19 @@
 
         if (self.shortcode != nil) {
             result = self.shortcode;
+        } else if (self.videopressGUID.length > 0) {
+            result = [NSString stringWithFormat:
+                      @"[wpvideo %@]",
+                      self.videopressGUID];
         } else if (self.remoteURL != nil) {
-            self.remoteURL = [self.remoteURL stringByReplacingOccurrencesOfString:@"\"" withString:@""];
-            NSNumber *htmlPreference = [NSNumber numberWithInt:
-                                        [[[NSUserDefaults standardUserDefaults]
-                                          objectForKey:@"video_html_preference"] intValue]];
-
-            if ([htmlPreference intValue] == 0) {
-                // Use HTML 5 <video> tag
-                result = [NSString stringWithFormat:
-                          @"<video src=\"%@\" controls=\"controls\" width=\"%@\" height=\"%@\">"
-                          "Your browser does not support the video tag"
-                          "</video>",
-                          self.remoteURL,
-                          embedWidth,
-                          embedHeight];
-            } else {
-                // Use HTML 4 <object><embed> tags
-                embedHeight = [NSString stringWithFormat:@"%d", ([embedHeight intValue] + 16)];
-                result = [NSString stringWithFormat:
-                          @"<object classid=\"clsid:02BF25D5-8C17-4B23-BC80-D3488ABDDC6B\""
-                          "codebase=\"http://www.apple.com/qtactivex/qtplugin.cab\""
-                          "width=\"%@\" height=\"%@\">"
-                          "<param name=\"src\" value=\"%@\">"
-                          "<param name=\"autoplay\" value=\"false\">"
-                          "<embed src=\"%@\" autoplay=\"false\" "
-                          "width=\"%@\" height=\"%@\" type=\"video/quicktime\" "
-                          "pluginspage=\"http://www.apple.com/quicktime/download/\" "
-                          "/></object>",
-                          embedWidth, embedHeight, self.remoteURL, self.remoteURL, embedWidth, embedHeight];
-            }
+            // Use HTML 5 <video> tag
+            result = [NSString stringWithFormat:
+                      @"<video src=\"%@\" controls=\"controls\" width=\"%@\" height=\"%@\">"
+                      "Your browser does not support the video tag"
+                      "</video>",
+                      self.remoteURL,
+                      embedWidth,
+                      embedHeight];
 
             DDLogVerbose(@"media.html: %@", result);
         }

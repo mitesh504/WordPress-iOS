@@ -724,6 +724,177 @@
     XCTAssertNotNil([blogSettings valueForKey:@"blog"], @"Missing Blog");
 }
 
+- (void)testMigrate48to49DoesntLoosePersonEntities
+{
+    // Migrated Properties
+    NSNumber *siteID = @(314);
+    NSNumber *userID = @(4242);
+    NSDictionary *propertiesMap = @{
+        @"avatarURL"    : @"www.wordpress.com",
+        @"displayName"  : @"tonystark",
+        @"firstName"    : @"Tony",
+        @"lastName"     : @"Stark",
+        @"role"         : @"admin",
+        @"username"     : @"tonystark",
+        @"siteID"       : siteID,
+        @"userID"       : userID,
+    };
+
+    // Paths
+    NSURL *model48Url = [self urlForModelName:@"WordPress 48" inDirectory:nil];
+    NSURL *model49Url = [self urlForModelName:@"WordPress 49" inDirectory:nil];
+    NSURL *storeUrl = [self urlForStoreWithName:@"WordPress48to49.sqlite"];
+
+    // Failsafe: Nuke previous DB
+    [[NSFileManager defaultManager] removeItemAtURL:storeUrl error:nil];
+
+    // Load Model 48 and 49
+    NSManagedObjectModel *model48 = [[NSManagedObjectModel alloc] initWithContentsOfURL:model48Url];
+    NSManagedObjectModel *model49 = [[NSManagedObjectModel alloc] initWithContentsOfURL:model49Url];
+
+    [self cleanModelObjectClassnames:model48];
+    [self cleanModelObjectClassnames:model49];
+
+    // New Model 40 Stack
+    NSPersistentStoreCoordinator *psc = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:model48];
+
+    NSDictionary *options = @{
+        NSInferMappingModelAutomaticallyOption          : @(YES),
+        NSMigratePersistentStoresAutomaticallyOption    : @(YES)
+    };
+
+    NSError *error = nil;
+    NSPersistentStore *ps = [psc addPersistentStoreWithType:NSSQLiteStoreType
+                                              configuration:nil
+                                                        URL:storeUrl
+                                                    options:options
+                                                      error:&error];
+
+    NSManagedObjectContext *context = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSMainQueueConcurrencyType];
+    context.persistentStoreCoordinator = psc;
+
+    XCTAssertNil(error, @"Error while loading the PSC for Model 48");
+    XCTAssertNotNil(context, @"Invalid NSManagedObjectContext");
+
+
+    NSManagedObject *person = [NSEntityDescription insertNewObjectForEntityForName:@"Person" inManagedObjectContext:context];
+    XCTAssertNoThrow([person setValuesForKeysWithDictionary:propertiesMap], @"Something is very very wrong");
+
+    [context save:&error];
+    XCTAssertNil(error, @"Error while saving context");
+
+    // Cleanup
+    XCTAssertNotNil(ps);
+    psc = nil;
+
+    // Migrate to Model 49
+    BOOL migrateResult = [ALIterativeMigrator iterativeMigrateURL:storeUrl
+                                                           ofType:NSSQLiteStoreType
+                                                          toModel:model49
+                                                orderedModelNames:@[@"WordPress 48", @"WordPress 49"]
+                                                            error:&error];
+    if (!migrateResult) {
+        NSLog(@"Error while migrating: %@", error);
+    }
+
+    XCTAssertTrue(migrateResult);
+
+    // Load a Model 42 Stack
+    psc = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:model49];
+    ps = [psc addPersistentStoreWithType:NSSQLiteStoreType
+                           configuration:nil
+                                     URL:storeUrl
+                                 options:options
+                                   error:&error];
+
+    context = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSMainQueueConcurrencyType];
+    context.persistentStoreCoordinator = psc;
+
+    XCTAssertNil(error, @"Error while loading the PSC for Model 49");
+    XCTAssertNotNil(ps);
+    
+    NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"Person"];
+    request.predicate = [NSPredicate predicateWithFormat:@"userID == %@", userID];
+    
+    // Verify the Heavyweight Migration: Blog Entity
+    NSManagedObject *migratedBlog = [[context executeFetchRequest:request error:nil] firstObject];
+    XCTAssertNotNil(migratedBlog, @"Oops");
+    
+    
+    // Verify the Heavyweight Migration: Person Entity
+    for (NSString *key in propertiesMap) {
+        XCTAssertEqualObjects([migratedBlog valueForKey:key], [propertiesMap valueForKey:key], @"Oops");
+    }
+}
+
+- (void)testMigrate52to53EffectivelyRemapsSimperiumKeyIntoNotificationIdProperty
+{
+    // Properties
+    NSURL *model52Url = [self urlForModelName:@"WordPress 52" inDirectory:nil];
+    NSURL *model53Url = [self urlForModelName:@"WordPress 53" inDirectory:nil];
+    NSURL *storeUrl = [self urlForStoreWithName:@"WordPress52to53.sqlite"];
+
+    // Load a Model 52 Stack
+    NSManagedObjectModel *model52 = [[NSManagedObjectModel alloc] initWithContentsOfURL:model52Url];
+    NSPersistentStoreCoordinator *psc = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:model52];
+
+    NSDictionary *options = @{
+        NSInferMappingModelAutomaticallyOption          : @(YES),
+        NSMigratePersistentStoresAutomaticallyOption    : @(YES)
+    };
+
+    NSError *error = nil;
+    [psc addPersistentStoreWithType:NSSQLiteStoreType configuration:nil URL:storeUrl options:options error:&error];
+
+    NSManagedObjectContext *context = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSMainQueueConcurrencyType];
+    context.persistentStoreCoordinator = psc;
+
+    XCTAssertNil(error, @"Error while loading the PSC for Model 52");
+    XCTAssertNotNil(context, @"Invalid NSManagedObjectContext");
+
+    // Insert a Dummy Notification
+    NSString *legacySimperiumKey = @"31337";
+
+    NSManagedObject *note = [NSEntityDescription insertNewObjectForEntityForName:@"Notification" inManagedObjectContext:context];
+    [note setValue:legacySimperiumKey forKey:@"simperiumKey"];
+    [note setValue:@(true) forKey:@"read"];
+    [context save:&error];
+    XCTAssertNil(error, @"Error while saving context");
+
+    // Migrate to Model 53
+    NSManagedObjectModel *model53 = [[NSManagedObjectModel alloc] initWithContentsOfURL:model53Url];
+    BOOL migrateResult = [ALIterativeMigrator iterativeMigrateURL:storeUrl
+                                                           ofType:NSSQLiteStoreType
+                                                          toModel:model53
+                                                orderedModelNames:@[@"WordPress 52", @"WordPress 53"]
+                                                            error:&error];
+    if (!migrateResult) {
+        NSLog(@"Error while migrating: %@", error);
+    }
+
+    XCTAssertTrue(migrateResult);
+
+    // Load a Model 53 Stack
+    NSPersistentStoreCoordinator *psc53 = [[NSPersistentStoreCoordinator alloc] initWithManagedObjectModel:model53];
+    [psc53 addPersistentStoreWithType:NSSQLiteStoreType configuration:nil URL:storeUrl options:options error:&error];
+
+    context = [[NSManagedObjectContext alloc] initWithConcurrencyType:NSMainQueueConcurrencyType];
+    context.persistentStoreCoordinator = psc53;
+
+    XCTAssertNil(error, @"Error while loading the PSC for Model 53");
+
+    // Fetch the Notification
+    NSFetchRequest *request = [NSFetchRequest fetchRequestWithEntityName:@"Notification"];
+    request.predicate = [NSPredicate predicateWithFormat:@"notificationId == %@", legacySimperiumKey];
+
+    NSArray *results = [context executeFetchRequest:request error:nil];
+    XCTAssert(results.count == 1, @"Error Fetching Note");
+
+    NSManagedObject *migratedNote = [results firstObject];
+    XCTAssertEqualObjects([migratedNote valueForKey:@"notificationId"], legacySimperiumKey, @"Oops?");
+    XCTAssertEqualObjects([migratedNote valueForKey:@"read"], @(true), @"Oops?");
+}
+
 
 #pragma mark - Private Helpers
 

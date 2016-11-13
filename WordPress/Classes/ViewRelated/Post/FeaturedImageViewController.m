@@ -1,14 +1,13 @@
 #import "FeaturedImageViewController.h"
 
-#import "Post.h"
 #import "Media.h"
 #import "WordPress-Swift.h"
 
 @interface FeaturedImageViewController ()
 
-@property (nonatomic, strong) UIBarButtonItem *deleteButton;
+@property (nonatomic, strong) UIBarButtonItem *doneButton;
+@property (nonatomic, strong) UIBarButtonItem *removeButton;
 @property (nonatomic, strong) AbstractPost *post;
-@property (nonatomic, strong) UIBarButtonItem *activityItem;
 
 @end
 
@@ -27,8 +26,6 @@
     if (self) {
         self.title = NSLocalizedString(@"Featured Image", @"Title for the Featured Image view");
         self.post = post;
-        self.extendedLayoutIncludesOpaqueBars = YES;
-        self.automaticallyAdjustsScrollViewInsets = NO;
     }
     return self;
 }
@@ -36,23 +33,14 @@
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-
     self.view.backgroundColor = [UIColor whiteColor];
-
-    [self setupToolbar];
+    self.navigationItem.leftBarButtonItems = @[self.doneButton];
+    self.navigationItem.rightBarButtonItems = @[self.removeButton];
 }
 
 - (void)viewWillAppear:(BOOL)animated
 {
     [super viewWillAppear:animated];
-
-    if (self.navigationController.toolbarHidden) {
-        [self.navigationController setToolbarHidden:NO animated:YES];
-    }
-
-    for (UIView *view in self.navigationController.toolbar.subviews) {
-        [view setExclusiveTouch:YES];
-    }
 
     // Super class will hide the status bar by default
     [self hideBars:NO animated:NO];
@@ -79,29 +67,33 @@
 
 #pragma mark - Appearance Related Methods
 
-- (void)setupToolbar
+- (UIBarButtonItem *)doneButton
 {
-    UIToolbar *toolbar = self.navigationController.toolbar;
-    toolbar.barTintColor = [WPStyleGuide littleEddieGrey];
-    toolbar.translucent = NO;
-    toolbar.barStyle = UIBarStyleDefault;
-
-    if ([self.toolbarItems count] > 0) {
-        return;
+    if (!_doneButton) {
+        _doneButton = [[UIBarButtonItem alloc] initWithTitle:NSLocalizedString(@"Done", @"Label for confirm feature image of a post")
+                                                       style:UIBarButtonItemStylePlain
+                                                      target:self
+                                                      action:@selector(confirmFeaturedImage)];
     }
-
-    self.deleteButton = [[UIBarButtonItem alloc] initWithImage:[UIImage imageNamed:@"icon-comments-trash"] style:UIBarButtonItemStylePlain target:self action:@selector(removeFeaturedImage)];
-
-    self.deleteButton.tintColor = [WPStyleGuide readGrey];
-    self.deleteButton.accessibilityIdentifier = @"Remove Featured Image";
-    self.deleteButton.accessibilityLabel = NSLocalizedString(@"Remove Featured Image", @"Accessibility  Label for the Remove Feature Image icon. Tapping will show a confirmation screen for removing the feature image from the post.");
-    
-    UIActivityIndicatorView *activityView = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
-    [activityView startAnimating];
-    self.activityItem = [[UIBarButtonItem alloc] initWithCustomView:activityView];
-
-    [self showActivityView:NO];
+    return _doneButton;
 }
+
+- (UIBarButtonItem *)removeButton
+{
+    if (!_removeButton) {
+        UIBarButtonItem *button = [[UIBarButtonItem alloc] initWithTitle:NSLocalizedString(@"Remove", @"Label for the Remove Feature Image icon. Tapping will show a confirmation screen for removing the feature image from the post.")
+                                                                   style:UIBarButtonItemStylePlain
+                                                                  target:self
+                                                                  action:@selector(removeFeaturedImage)];
+        NSString *title = NSLocalizedString(@"Remove Featured Image", @"Accessibility  Label for the Remove Feature Image icon. Tapping will show a confirmation screen for removing the feature image from the post.");
+        button.accessibilityLabel = title;
+        button.accessibilityIdentifier = @"Remove Featured Image";
+        _removeButton = button;
+    }
+    
+    return _removeButton;
+}
+
 
 - (void)hideBars:(BOOL)hide animated:(BOOL)animated
 {
@@ -109,10 +101,6 @@
 
     if (self.navigationController.navigationBarHidden != hide) {
         [self.navigationController setNavigationBarHidden:hide animated:animated];
-    }
-
-    if (self.navigationController.toolbarHidden != hide) {
-        [self.navigationController setToolbarHidden:hide animated:animated];
     }
 
     [self centerImage];
@@ -123,22 +111,6 @@
             self.view.backgroundColor = [UIColor whiteColor];
         }
     }];
-}
-
-- (void)showActivityView:(BOOL)show
-{
-    UIBarButtonItem *leftFixedSpacer = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
-    UIBarButtonItem *rightFixedSpacer = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
-    UIBarButtonItem *centerFlexSpacer = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
-
-    leftFixedSpacer.width = -2.0f;
-    rightFixedSpacer.width = -5.0f;
-
-    if (show) {
-        self.toolbarItems = @[leftFixedSpacer, self.deleteButton, centerFlexSpacer, self.activityItem, rightFixedSpacer];
-    } else {
-        self.toolbarItems = @[leftFixedSpacer, self.deleteButton];
-    }
 }
 
 #pragma mark - Action Methods
@@ -161,11 +133,17 @@
                                   style:UIAlertActionStyleDestructive
                                 handler:^(UIAlertAction *alertAction) {
                                     [self.post setFeaturedImage:nil];
-                                    [self.navigationController popViewControllerAnimated:YES];
+                                    [self.presentingViewController dismissViewControllerAnimated:YES completion:nil];
                                 }];
-    alertController.popoverPresentationController.barButtonItem = self.deleteButton;
+    alertController.popoverPresentationController.barButtonItem = self.removeButton;
     [self presentViewController:alertController animated:YES completion:nil];
 
 }
+
+- (void)confirmFeaturedImage
+{
+    [self.presentingViewController dismissViewControllerAnimated:YES completion:nil];
+}
+
 
 @end

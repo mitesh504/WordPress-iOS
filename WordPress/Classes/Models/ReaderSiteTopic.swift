@@ -3,6 +3,7 @@ import Foundation
 @objc public class ReaderSiteTopic: ReaderAbstractTopic
 {
     @NSManaged public var feedID: NSNumber
+    @NSManaged public var feedURL: String
     @NSManaged public var isJetpack: Bool
     @NSManaged public var isPrivate: Bool
     @NSManaged public var isVisible: Bool
@@ -19,7 +20,7 @@ import Foundation
 
     public var isExternal: Bool {
         get {
-            return (feedID.integerValue > 0)
+            return siteID.integerValue == 0
         }
     }
 }

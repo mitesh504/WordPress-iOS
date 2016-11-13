@@ -1,6 +1,5 @@
 #import "WPAddPostCategoryViewController.h"
 #import "Blog.h"
-#import "Post.h"
 #import "PostCategory.h"
 #import "PostCategoriesViewController.h"
 #import "Constants.h"
@@ -52,7 +51,6 @@ static const CGFloat HorizontalMargin = 15.0f;
 
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
                                                                                           target:self action:@selector(dismiss:)];
-    [WPStyleGuide resetReadableMarginsForTableView:self.tableView];
     [WPStyleGuide configureColorsForView:self.view andTableView:self.tableView];
 }
 
@@ -145,7 +143,11 @@ static const CGFloat HorizontalMargin = 15.0f;
 
 - (void)showParentCategorySelector
 {
-    PostCategoriesViewController *controller = [[PostCategoriesViewController alloc] initWithBlog:self.blog currentSelection:nil selectionMode:CategoriesSelectionModeParent];
+    NSArray<PostCategory*>* currentSelection = self.parentCategory ? @[self.parentCategory] : nil;
+    
+    PostCategoriesViewController *controller = [[PostCategoriesViewController alloc] initWithBlog:self.blog
+                                                                                 currentSelection:currentSelection
+                                                                                    selectionMode:CategoriesSelectionModeParent];
     controller.delegate = self;
     [self.navigationController pushViewController:controller animated:YES];
 }

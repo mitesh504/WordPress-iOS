@@ -1,80 +1,102 @@
 import UIKit
 import WordPressShared
 
-class MyProfileViewController: UITableViewController {
-    var account: WPAccount! {
+func MyProfileViewController(account account: WPAccount) -> ImmuTableViewController? {
+    guard let api = account.wordPressComRestApi else {
+        return nil
+    }
+
+    let service = AccountSettingsService(userID: account.userID.integerValue, api: api)
+    return MyProfileViewController(service: service)
+}
+
+func MyProfileViewController(service service: AccountSettingsService) -> ImmuTableViewController {
+    let controller = MyProfileController(service: service)
+    let viewController = ImmuTableViewController(controller: controller)
+    return viewController
+}
+
+/// MyProfileController requires the `presenter` to be set before using.
+/// To avoid problems, it's marked private and should only be initialized using the
+/// `MyProfileViewController` factory functions.
+private class MyProfileController: SettingsController {
+    // MARK: - ImmuTableController
+
+    let title = NSLocalizedString("My Profile", comment: "My Profile view title")
+
+    var immuTableRows: [ImmuTableRow.Type] {
+        return [EditableTextRow.self]
+    }
+
+    // MARK: - Initialization
+
+    let service: AccountSettingsService
+    var settings: AccountSettings? {
         didSet {
-            self.service = AccountSettingsService(userID: account.userID.integerValue, api: account.restApi)
+            NSNotificationCenter.defaultCenter().postNotificationName(ImmuTableViewController.modelChangedNotification, object: nil)
         }
     }
-
-    var service: AccountSettingsService! {
+    var noticeMessage: String? {
         didSet {
-            subscribeSettings()
+            NSNotificationCenter.defaultCenter().postNotificationName(ImmuTableViewController.modelChangedNotification, object: nil)
         }
     }
 
-    var settingsSubscription: AccountSettingsSubscription?
-
-    var handler: ImmuTableViewHandler!
-
-    // MARK: - Table View Controller
-
-    required convenience init() {
-        self.init(style: .Grouped)
+    init(service: AccountSettingsService) {
+        self.service = service
+        let notificationCenter = NSNotificationCenter.defaultCenter()
+        notificationCenter.addObserver(self, selector: #selector(MyProfileController.loadStatus), name: AccountSettingsService.Notifications.refreshStatusChanged, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(MyProfileController.loadSettings), name: AccountSettingsService.Notifications.accountSettingsChanged, object: nil)
     }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-
-        self.title = NSLocalizedString("My Profile", comment: "My Profile view title")
-
-        ImmuTable.registerRows([
-            EditableTextRow.self
-            ], tableView: self.tableView)
-
-        handler = ImmuTableViewHandler(takeOver: self)
-
-        WPStyleGuide.resetReadableMarginsForTableView(tableView)
-        WPStyleGuide.configureColorsForView(view, andTableView: tableView)
-
-        service.refreshSettings({ _ in })
+    deinit {
+        NSNotificationCenter.defaultCenter().removeObserver(self)
     }
 
-    override func viewWillAppear(animated: Bool) {
-        if settingsSubscription == nil {
-            subscribeSettings()
-        }
+    func refreshModel() {
+        service.refreshSettings()
     }
 
-    override func viewWillDisappear(animated: Bool) {
-        unsubscribeSettings()
+    @objc func loadStatus() {
+        noticeMessage = service.status.errorMessage
     }
 
-    // MARK: - View Model
+    @objc func loadSettings() {
+        settings = service.settings
+    }
 
-    func buildViewModel(settings: AccountSettings?) {
+    // MARK: - ImmuTableViewController
+
+    func tableViewModelWithPresenter(presenter: ImmuTablePresenter) -> ImmuTable {
+        return mapViewModel(settings, presenter: presenter)
+    }
+
+    // MARK: - Model mapping
+
+    func mapViewModel(settings: AccountSettings?, presenter: ImmuTablePresenter) -> ImmuTable {
         let firstNameRow = EditableTextRow(
             title: NSLocalizedString("First Name", comment: "My Profile first name label"),
             value: settings?.firstName ?? "",
-            action: editableTextRowAction(AccountSettingsChange.FirstName))
+            action: presenter.push(editText(AccountSettingsChange.FirstName, service: service)))
 
         let lastNameRow = EditableTextRow(
             title: NSLocalizedString("Last Name", comment: "My Profile last name label"),
             value: settings?.lastName ?? "",
-            action: editableTextRowAction(AccountSettingsChange.LastName))
+            action: presenter.push(editText(AccountSettingsChange.LastName, service: service)))
 
         let displayNameRow = EditableTextRow(
             title: NSLocalizedString("Display Name", comment: "My Profile display name label"),
             value: settings?.displayName ?? "",
-            action: editableTextRowAction(AccountSettingsChange.DisplayName))
+            action: presenter.push(editText(AccountSettingsChange.DisplayName, service: service)))
 
         let aboutMeRow = EditableTextRow(
             title: NSLocalizedString("About Me", comment: "My Profile 'About me' label"),
             value: settings?.aboutMe ?? "",
-            action: editableTextRowAction(AccountSettingsChange.AboutMe))
+            action: presenter.push(editMultilineText(AccountSettingsChange.AboutMe,
+                hint:NSLocalizedString("Tell us a bit about you.", comment: "My Profile 'About me' hint text"),
+                service: service)))
 
-        handler.viewModel =  ImmuTable(sections: [
+        return ImmuTable(sections: [
             ImmuTableSection(rows: [
                 firstNameRow,
                 lastNameRow,
@@ -84,54 +106,4 @@ class MyProfileViewController: UITableViewController {
             ])
     }
 
-    func subscribeSettings() {
-        settingsSubscription = service.subscribeSettings({
-            [unowned self]
-            (settings) -> Void in
-
-            DDLogSwift.logDebug("Got settings \(settings)")
-            self.buildViewModel(settings)
-        })
-    }
-
-    func unsubscribeSettings() {
-        settingsSubscription = nil
-    }
-
-    // MARK: - Cell Actions
-
-    func editableTextRowAction(changeType: String -> AccountSettingsChange) -> (ImmuTableRow) -> Void {
-        return {
-            [unowned self]
-            row in
-
-            let row = row as! EditableTextRow
-            let controller = self.controllerForEditableText(row, changeType: changeType)
-
-            self.navigationController?.pushViewController(controller, animated: true)
-        }
-    }
-
-    func controllerForEditableText(row: EditableTextRow, changeType: String -> AccountSettingsChange) -> SettingsTextViewController {
-        let title = row.title
-        let value = row.value
-
-        let controller = SettingsTextViewController(
-            text: value,
-            placeholder: "\(title)...",
-            hint: nil,
-            isPassword: false)
-
-        controller.title = title
-        controller.onValueChanged = {
-            [unowned self]
-            value in
-
-            let change = changeType(value)
-            self.service.saveChange(change)
-            DDLogSwift.logDebug("\(title) changed: \(value)")
-        }
-
-        return controller
-    }
 }

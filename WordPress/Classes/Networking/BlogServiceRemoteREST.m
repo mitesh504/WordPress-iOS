@@ -1,13 +1,15 @@
 #import "BlogServiceRemoteREST.h"
 #import "NSMutableDictionary+Helpers.h"
-#import <WordPressComApi.h>
 #import "WordPress-Swift.h"
-
+#import "RemoteBlog.h"
+#import "RemoteBlogOptionsHelper.h"
+#import "RemotePostType.h"
 
 #pragma mark - Parsing Keys
 static NSString * const RemoteBlogNameKey                                   = @"name";
 static NSString * const RemoteBlogTaglineKey                                = @"description";
 static NSString * const RemoteBlogPrivacyKey                                = @"blog_public";
+static NSString * const RemoteBlogLanguageKey                               = @"lang_id";
 
 static NSString * const RemoteBlogSettingsKey                               = @"settings";
 static NSString * const RemoteBlogDefaultCategoryKey                        = @"default_category";
@@ -34,6 +36,18 @@ static NSString * const RemoteBlogRelatedPostsEnabledKey                    = @"
 static NSString * const RemoteBlogRelatedPostsShowHeadlineKey               = @"jetpack_relatedposts_show_headline";
 static NSString * const RemoteBlogRelatedPostsShowThumbnailsKey             = @"jetpack_relatedposts_show_thumbnails";
 
+static NSString * const RemoteBlogSharingButtonStyle                        = @"sharing_button_style";
+static NSString * const RemoteBlogSharingLabel                              = @"sharing_label";
+static NSString * const RemoteBlogSharingTwitterName                        = @"twitter_via";
+static NSString * const RemoteBlogSharingCommentLikesEnabled                = @"jetpack_comment_likes_enabled";
+static NSString * const RemoteBlogSharingDisabledLikes                      = @"disabled_likes";
+static NSString * const RemoteBlogSharingDisabledReblogs                    = @"disabled_reblogs";
+
+static NSString * const RemotePostTypesKey                                  = @"post_types";
+static NSString * const RemotePostTypeNameKey                               = @"name";
+static NSString * const RemotePostTypeLabelKey                              = @"label";
+static NSString * const RemotePostTypeQueryableKey                          = @"api_queryable";
+
 #pragma mark - Keys used for Update Calls
 // Note: Only god knows why these don't match the "Parsing Keys"
 static NSString * const RemoteBlogNameForUpdateKey                          = @"blogname";
@@ -47,94 +61,112 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
 
 @implementation BlogServiceRemoteREST
 
-- (void)checkMultiAuthorForBlogID:(NSNumber *)blogID
-                          success:(void(^)(BOOL isMultiAuthor))success
-                          failure:(void (^)(NSError *error))failure
+- (void)checkMultiAuthorWithSuccess:(void(^)(BOOL isMultiAuthor))success
+                            failure:(void (^)(NSError *error))failure
 {
-    NSParameterAssert([blogID isKindOfClass:[NSNumber class]]);
-    
     NSDictionary *parameters = @{@"authors_only":@(YES)};
     
-    NSString *path = [NSString stringWithFormat:@"sites/%@/users", blogID];
+    NSString *path = [self pathForUsers];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
        parameters:parameters
-          success:^(AFHTTPRequestOperation *operation, id responseObject) {
+          success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
               if (success) {
                   NSDictionary *response = (NSDictionary *)responseObject;
                   BOOL isMultiAuthor = [[response arrayForKey:@"users"] count] > 1;
                   success(isMultiAuthor);
               }
-          } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
               if (failure) {
                   failure(error);
               }
           }];
 }
 
-- (void)syncOptionsForBlogID:(NSNumber *)blogID
-                     success:(OptionsHandler)success
-                     failure:(void (^)(NSError *))failure
+- (void)syncSiteDetailsWithSuccess:(SiteDetailsHandler)success
+                           failure:(void (^)(NSError *))failure
 {
-    NSParameterAssert([blogID isKindOfClass:[NSNumber class]]);
-    
-    NSString *path = [self pathForOptionsWithBlogID:blogID];
+    NSString *path = [self pathForOptions];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
        parameters:nil
-          success:^(AFHTTPRequestOperation *operation, id responseObject) {
-              NSDictionary *response = (NSDictionary *)responseObject;
-              NSDictionary *options = [self mapOptionsFromResponse:response];
+          success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
+              NSDictionary *responseDict = (NSDictionary *)responseObject;
+              RemoteBlog *remoteBlog = [[RemoteBlog alloc] initWithJSONDictionary:responseDict];
               if (success) {
-                  success(options);
+                  success(remoteBlog);
               }
-          } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
               if (failure) {
                   failure(error);
               }
           }];
 }
 
-- (void)syncPostFormatsForBlogID:(NSNumber *)blogID
-                         success:(PostFormatsHandler)success
-                         failure:(void (^)(NSError *))failure
+- (void)syncPostTypesWithSuccess:(PostTypesHandler)success
+                         failure:(void (^)(NSError *error))failure
 {
-    NSParameterAssert([blogID isKindOfClass:[NSNumber class]]);
-    
-    NSString *path = [self pathForPostFormatsWithBlogID:blogID];
+    NSString *path = [self pathForPostTypes];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
+    NSDictionary *parameters = @{@"context": @"edit"};
+    [self.wordPressComRestApi GET:requestUrl
+       parameters:parameters
+          success:^(NSDictionary *responseObject, NSHTTPURLResponse *httpResponse) {
+             
+              NSAssert([responseObject isKindOfClass:[NSDictionary class]], @"Response should be a dictionary.");
+              NSArray <RemotePostType *> *postTypes = [[responseObject arrayForKey:RemotePostTypesKey] wp_map:^id(NSDictionary *json) {
+                  return [self remotePostTypeWithDictionary:json];
+              }];
+              if (!postTypes.count) {
+                  DDLogError(@"Response to %@ did not include post types for site.", requestUrl);
+                  failure(nil);
+                  return;
+              }
+              if (success) {
+                  success(postTypes);
+              }
+          } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
+              if (failure) {
+                  failure(error);
+              }
+          }];
+}
+
+- (void)syncPostFormatsWithSuccess:(PostFormatsHandler)success
+                           failure:(void (^)(NSError *))failure
+{
+    NSString *path = [self pathForPostFormats];
+    NSString *requestUrl = [self pathForEndpoint:path
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
        parameters:nil
-          success:^(AFHTTPRequestOperation *operation, id responseObject) {
+          success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
               NSDictionary *formats = [self mapPostFormatsFromResponse:responseObject[@"formats"]];
               if (success) {
                   success(formats);
               }
-          } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
               if (failure) {
                   failure(error);
               }
           }];
 }
 
-- (void)syncSettingsForBlogID:(NSNumber *)blogID
-                    success:(SettingsHandler)success
-                    failure:(void (^)(NSError *error))failure
+- (void)syncSettingsWithSuccess:(SettingsHandler)success
+                        failure:(void (^)(NSError *error))failure
 {
-    NSParameterAssert([blogID isKindOfClass:[NSNumber class]]);
+    NSString *path = [self pathForSettings];
+    NSString *requestUrl = [self pathForEndpoint:path withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    NSString *path = [self pathForSettingsWithBlogID:blogID];
-    NSString *requestUrl = [self pathForEndpoint:path withVersion:ServiceRemoteRESTApiVersion_1_1];
-    
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
        parameters:nil
-          success:^(AFHTTPRequestOperation *operation, id responseObject) {
+          success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
               if (![responseObject isKindOfClass:[NSDictionary class]]){
                   if (failure) {
                       failure(nil);
@@ -145,7 +177,7 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
               if (success) {
                   success(remoteSettings);
               }
-          } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+          } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
               if (failure) {
                   failure(error);
               }
@@ -153,20 +185,18 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
 }
 
 - (void)updateBlogSettings:(RemoteBlogSettings *)settings
-                 forBlogID:(NSNumber *)blogID
                    success:(SuccessHandler)success
                    failure:(void (^)(NSError *error))failure;
 {
     NSParameterAssert(settings);
-    NSParameterAssert([blogID isKindOfClass:[NSNumber class]]);
-    
+
     NSDictionary *parameters = [self remoteSettingsToDictionary:settings];
-    NSString *path = [NSString stringWithFormat:@"sites/%@/settings?context=edit", blogID];
-    NSString *requestUrl = [self pathForEndpoint:path withVersion:ServiceRemoteRESTApiVersion_1_1];
+    NSString *path = [NSString stringWithFormat:@"sites/%@/settings?context=edit", self.siteID];
+    NSString *requestUrl = [self pathForEndpoint:path withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api POST:requestUrl
+    [self.wordPressComRestApi POST:requestUrl
         parameters:parameters
-           success:^(AFHTTPRequestOperation *operation, NSDictionary *responseDict) {
+           success:^(NSDictionary *responseDict, NSHTTPURLResponse *httpResponse) {
                if (![responseDict isKindOfClass:[NSDictionary class]]) {
                    if (failure) {
                        failure(nil);
@@ -181,7 +211,7 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
                    success();
                }
            }
-           failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+           failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
                if (failure) {
                    failure(error);
                }
@@ -190,63 +220,33 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
 
 #pragma mark - API paths
 
-- (NSString *)pathForOptionsWithBlogID:(NSNumber *)blogID
+- (NSString *)pathForUsers
 {
-    return [NSString stringWithFormat:@"sites/%@", blogID];
+    return [NSString stringWithFormat:@"sites/%@/users", self.siteID];
 }
 
-- (NSString *)pathForPostFormatsWithBlogID:(NSNumber *)blogID
+- (NSString *)pathForOptions
 {
-    return [NSString stringWithFormat:@"sites/%@/post-formats", blogID];
+    return [NSString stringWithFormat:@"sites/%@", self.siteID];
 }
 
-- (NSString *)pathForSettingsWithBlogID:(NSNumber *)blogID
+- (NSString *)pathForPostTypes
 {
-    return [NSString stringWithFormat:@"sites/%@/settings", blogID];
+    return [NSString stringWithFormat:@"sites/%@/post-types", self.siteID];
+}
+
+- (NSString *)pathForPostFormats
+{
+    return [NSString stringWithFormat:@"sites/%@/post-formats", self.siteID];
+}
+
+- (NSString *)pathForSettings
+{
+    return [NSString stringWithFormat:@"sites/%@/settings", self.siteID];
 }
 
 
 #pragma mark - Mapping methods
-
-- (NSDictionary *)mapOptionsFromResponse:(NSDictionary *)response
-{
-    NSMutableDictionary *options = [NSMutableDictionary dictionary];
-    options[@"home_url"] = response[@"URL"];
-    // We'd be better off saving this as a BOOL property on Blog, but let's do what XML-RPC does for now
-    options[@"blog_public"] = [[response numberForKey:@"is_private"] boolValue] ? @"-1" : @"0";
-    if ([[response numberForKey:@"jetpack"] boolValue]) {
-        options[@"jetpack_client_id"] = [response numberForKey:@"ID"];
-    }
-    if ( response[@"options"] ) {
-        options[@"post_thumbnail"] = [response valueForKeyPath:@"options.featured_images_enabled"];
-        NSArray *optionsDirectMapKeys = @[
-                                    @"admin_url",
-                                    @"login_url",
-                                    @"image_default_link_type",
-                                    @"software_version",
-                                    @"videopress_enabled",
-                                    @"timezone",
-                                    @"gmt_offset",
-                                    @"allowed_file_types",
-                                    ];
-
-        for (NSString *key in optionsDirectMapKeys) {
-            NSString *sourceKeyPath = [NSString stringWithFormat:@"options.%@", key];
-            if ([response valueForKeyPath:sourceKeyPath] != nil) {
-                options[key] = [response valueForKeyPath:sourceKeyPath];
-            }
-        }
-    } else {
-        //valid default values
-        options[@"software_version"] = @"3.6";
-    }
-    NSMutableDictionary *valueOptions = [NSMutableDictionary dictionaryWithCapacity:options.count];
-    [options enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
-        valueOptions[key] = @{@"value": obj};
-    }];
-
-    return [NSDictionary dictionaryWithDictionary:valueOptions ];
-}
 
 - (NSDictionary *)mapPostFormatsFromResponse:(id)response
 {
@@ -255,6 +255,15 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
     } else {
         return @{};
     }
+}
+
+- (RemotePostType *)remotePostTypeWithDictionary:(NSDictionary *)json
+{
+    RemotePostType *postType = [[RemotePostType alloc] init];
+    postType.name = [json stringForKey:RemotePostTypeNameKey];
+    postType.label = [json stringForKey:RemotePostTypeLabelKey];
+    postType.apiQueryable = [json numberForKey:RemotePostTypeQueryableKey];
+    return postType;
 }
 
 - (RemoteBlogSettings *)remoteBlogSettingFromJSONDictionary:(NSDictionary *)json
@@ -268,6 +277,7 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
     settings.name = [json stringForKey:RemoteBlogNameKey];
     settings.tagline = [json stringForKey:RemoteBlogTaglineKey];
     settings.privacy = [rawSettings numberForKey:RemoteBlogPrivacyKey];
+    settings.languageID = [rawSettings numberForKey:RemoteBlogLanguageKey];
     
     // Writing
     settings.defaultCategoryID = [rawSettings numberForKey:RemoteBlogDefaultCategoryKey] ?: @(RemoteBlogUncategorizedCategory);
@@ -299,14 +309,21 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
     settings.commentsThreadingDepth = [rawSettings numberForKey:RemoteBlogCommentsThreadingDepthKey];
     settings.pingbackOutboundEnabled = [rawSettings numberForKey:RemoteBlogCommentsPingbackOutboundKey];
     settings.pingbackInboundEnabled = [rawSettings numberForKey:RemoteBlogCommentsPingbackInboundKey];
-    
-    
+
     // Related Posts
     settings.relatedPostsAllowed = [rawSettings numberForKey:RemoteBlogRelatedPostsAllowedKey];
     settings.relatedPostsEnabled = [rawSettings numberForKey:RemoteBlogRelatedPostsEnabledKey];
     settings.relatedPostsShowHeadline = [rawSettings numberForKey:RemoteBlogRelatedPostsShowHeadlineKey];
     settings.relatedPostsShowThumbnails = [rawSettings numberForKey:RemoteBlogRelatedPostsShowThumbnailsKey];
-    
+
+    // Sharing
+    settings.sharingButtonStyle = [rawSettings stringForKey:RemoteBlogSharingButtonStyle];
+    settings.sharingLabel = [rawSettings stringForKey:RemoteBlogSharingLabel];
+    settings.sharingTwitterName = [rawSettings stringForKey:RemoteBlogSharingTwitterName];
+    settings.sharingCommentLikesEnabled = [rawSettings numberForKey:RemoteBlogSharingCommentLikesEnabled];
+    settings.sharingDisabledLikes = [rawSettings numberForKey:RemoteBlogSharingDisabledLikes];
+    settings.sharingDisabledReblogs = [rawSettings numberForKey:RemoteBlogSharingDisabledReblogs];
+
     return settings;
 }
 
@@ -318,7 +335,8 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
     [parameters setValueIfNotNil:settings.name forKey:RemoteBlogNameForUpdateKey];
     [parameters setValueIfNotNil:settings.tagline forKey:RemoteBlogTaglineForUpdateKey];
     [parameters setValueIfNotNil:settings.privacy forKey:RemoteBlogPrivacyKey];
-
+    [parameters setValueIfNotNil:settings.languageID forKey:RemoteBlogLanguageKey];
+    
     [parameters setValueIfNotNil:settings.defaultCategoryID forKey:RemoteBlogDefaultCategoryKey];
     [parameters setValueIfNotNil:settings.defaultPostFormat forKey:RemoteBlogDefaultPostFormatKey];
     
@@ -344,6 +362,14 @@ static NSInteger const RemoteBlogUncategorizedCategory                      = 1;
     [parameters setValueIfNotNil:settings.relatedPostsEnabled forKey:RemoteBlogRelatedPostsEnabledKey];
     [parameters setValueIfNotNil:settings.relatedPostsShowHeadline forKey:RemoteBlogRelatedPostsShowHeadlineKey];
     [parameters setValueIfNotNil:settings.relatedPostsShowThumbnails forKey:RemoteBlogRelatedPostsShowThumbnailsKey];
+
+    // Sharing
+    [parameters setValueIfNotNil:settings.sharingButtonStyle forKey:RemoteBlogSharingButtonStyle];
+    [parameters setValueIfNotNil:settings.sharingLabel forKey:RemoteBlogSharingLabel];
+    [parameters setValueIfNotNil:settings.sharingTwitterName forKey:RemoteBlogSharingTwitterName];
+    [parameters setValueIfNotNil:settings.sharingCommentLikesEnabled forKey:RemoteBlogSharingCommentLikesEnabled];
+    [parameters setValueIfNotNil:settings.sharingDisabledLikes forKey:RemoteBlogSharingDisabledLikes];
+    [parameters setValueIfNotNil:settings.sharingDisabledReblogs forKey:RemoteBlogSharingDisabledReblogs];
     
     return parameters;
 }

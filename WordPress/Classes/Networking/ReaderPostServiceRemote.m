@@ -5,9 +5,9 @@
 #import "RemoteReaderPost.h"
 #import "RemoteSourcePostAttribution.h"
 #import "ReaderTopicServiceRemote.h"
-#import "WordPressComApi.h"
 #import <WordPressShared/NSString+XMLExtensions.h>
 #import "WordPress-Swift.h"
+#import "PhotonImageURLHelper.h"
 
 // REST Post dictionary keys
 NSString * const PostRESTKeyAttachments = @"attachments";
@@ -42,6 +42,8 @@ NSString * const PostRESTKeyName = @"name";
 NSString * const PostRESTKeyNiceName = @"nice_name";
 NSString * const PostRESTKeyPermalink = @"permalink";
 NSString * const PostRESTKeyPostCount = @"post_count";
+NSString * const PostRESTKeyPosts = @"posts";
+NSString * const PostRESTKeyScore = @"score";
 NSString * const PostRESTKeySharingEnabled = @"sharing_enabled";
 NSString * const PostRESTKeySiteID = @"site_ID";
 NSString * const PostRESTKeySiteIsPrivate = @"site_is_private";
@@ -50,9 +52,12 @@ NSString * const PostRESTKeySiteURL = @"site_URL";
 NSString * const PostRESTKeySlug = @"slug";
 NSString * const PostRESTKeyStatus = @"status";
 NSString * const PostRESTKeyTitle = @"title";
+NSString * const PostRESTKeyTaggedOn = @"tagged_on";
 NSString * const PostRESTKeyTags = @"tags";
+NSString * const POSTRESTKeyTagDisplayName = @"display_name";
 NSString * const PostRESTKeyURL = @"URL";
 NSString * const PostRESTKeyWordCount = @"word_count";
+NSString * const PostRESTKeyRailcar = @"railcar";
 
 // Tag dictionary keys
 NSString * const TagKeyPrimary = @"primaryTag";
@@ -69,24 +74,59 @@ NSString * const CrossPostMetaXCommentPermalink = @"xcomment_original_permalink"
 NSString * const CrossPostMetaXPostOrigin = @"xpost_origin";
 NSString * const CrossPostMetaCommentPrefix = @"comment-";
 
+// Param keys
+NSString * const ParamsKeyAlgorithm = @"algorithm";
+NSString * const ParamKeyBefore = @"before";
+NSString * const ParamKeyMeta = @"meta";
+NSString * const ParamKeyNumber = @"number";
+NSString * const ParamKeyOffset = @"offset";
+NSString * const ParamKeyOrder = @"order";
+NSString * const ParamKeyDescending = @"DESC";
+NSString * const ParamKeyMetaValue = @"site,feed";
+
 static const NSInteger AvgWordsPerMinuteRead = 250;
 static const NSInteger MinutesToReadThreshold = 2;
+static const NSUInteger ReaderPostTitleLength = 30;
 
 @implementation ReaderPostServiceRemote
 
 - (void)fetchPostsFromEndpoint:(NSURL *)endpoint
+                     algorithm:(NSString *)algorithm
                          count:(NSUInteger)count
                         before:(NSDate *)date
-                       success:(void (^)(NSArray *posts))success
+                       success:(void (^)(NSArray<RemoteReaderPost *> *posts, NSString *algorithm))success
                        failure:(void (^)(NSError *error))failure
 {
     NSNumber *numberToFetch = @(count);
-    NSDictionary *params = @{@"number":numberToFetch,
-                             @"before": [DateUtils isoStringFromDate:date],
-                             @"order": @"DESC",
-                             @"meta":@"site,feed"
-                             };
+    NSMutableDictionary *params = [@{
+                                     ParamKeyNumber:numberToFetch,
+                                     ParamKeyBefore: [DateUtils isoStringFromDate:date],
+                                     ParamKeyOrder: ParamKeyDescending,
+                                     ParamKeyMeta: ParamKeyMetaValue
+                                     } mutableCopy];
+    if (algorithm) {
+        params[ParamsKeyAlgorithm] = algorithm;
+    }
 
+    [self fetchPostsFromEndpoint:endpoint withParameters:params success:success failure:failure];
+}
+
+- (void)fetchPostsFromEndpoint:(NSURL *)endpoint
+                     algorithm:(NSString *)algorithm
+                         count:(NSUInteger)count
+                        offset:(NSUInteger)offset
+                       success:(void (^)(NSArray<RemoteReaderPost *> *posts, NSString *algorithm))success
+                       failure:(void (^)(NSError *))failure
+{
+    NSMutableDictionary *params = [@{
+                                     ParamKeyNumber:@(count),
+                                     ParamKeyOffset: @(offset),
+                                     ParamKeyOrder: ParamKeyDescending,
+                                     ParamKeyMeta: ParamKeyMetaValue
+                                     } mutableCopy];
+    if (algorithm) {
+        params[ParamsKeyAlgorithm] = algorithm;
+    }
     [self fetchPostsFromEndpoint:endpoint withParameters:params success:success failure:failure];
 }
 
@@ -95,21 +135,27 @@ static const NSInteger MinutesToReadThreshold = 2;
           success:(void (^)(RemoteReaderPost *post))success
           failure:(void (^)(NSError *error))failure {
 
-    NSString *path = [NSString stringWithFormat:@"sites/%d/posts/%d/?meta=site", siteID, postID];
+    NSString *path = [NSString stringWithFormat:@"read/sites/%d/posts/%d/?meta=site", siteID, postID];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_2];
     
-    [self.api GET:requestUrl
+    [self.wordPressComRestApi GET:requestUrl
            parameters:nil
-              success:^(AFHTTPRequestOperation *operation, id responseObject) {
+              success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
                   if (!success) {
                       return;
                   }
 
-                  RemoteReaderPost *post = [self formatPostDictionary:(NSDictionary *)responseObject];
-                  success(post);
+                  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+                      // Do all of this work on a background thread, then call success on the main thread.
+                      // Do this to avoid any chance of blocking the UI while parsing.
+                      RemoteReaderPost *post = [self formatPostDictionary:(NSDictionary *)responseObject];
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                          success(post);
+                      });
+                  });
 
-              } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+              } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
                   if (failure) {
                       failure(error);
                   }
@@ -123,13 +169,13 @@ static const NSInteger MinutesToReadThreshold = 2;
 {
     NSString *path = [NSString stringWithFormat:@"sites/%d/posts/%d/likes/new", siteID, postID];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api POST:requestUrl parameters:nil success:^(AFHTTPRequestOperation *operation, id responseObject) {
+    [self.wordPressComRestApi POST:requestUrl parameters:nil success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
         if (success) {
             success();
         }
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
         if (failure) {
             failure(error);
         }
@@ -143,17 +189,27 @@ static const NSInteger MinutesToReadThreshold = 2;
 {
     NSString *path = [NSString stringWithFormat:@"sites/%d/posts/%d/likes/mine/delete", siteID, postID];
     NSString *requestUrl = [self pathForEndpoint:path
-                                     withVersion:ServiceRemoteRESTApiVersion_1_1];
+                                     withVersion:ServiceRemoteWordPressComRESTApiVersion_1_1];
     
-    [self.api POST:requestUrl parameters:nil success:^(AFHTTPRequestOperation *operation, id responseObject) {
+    [self.wordPressComRestApi POST:requestUrl parameters:nil success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
         if (success) {
             success();
         }
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+    } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
         if (failure) {
             failure(error);
         }
     }];
+}
+
+- (NSString *)endpointUrlForSearchPhrase:(NSString *)phrase
+{
+    NSAssert([phrase length] > 0, @"A search phrase is required.");
+
+    NSString *endpoint = [NSString stringWithFormat:@"read/search?q=%@", [phrase stringByUrlEncoding]];
+    NSString *absolutePath = [self pathForEndpoint:endpoint withVersion:ServiceRemoteWordPressComRESTApiVersion_1_2];
+    NSURL *url = [NSURL URLWithString:absolutePath relativeToURL:[NSURL URLWithString:WordPressComRestApi.apiBaseURLString]];
+    return [url absoluteString];
 }
 
 
@@ -168,29 +224,58 @@ static const NSInteger MinutesToReadThreshold = 2;
  */
 - (void)fetchPostsFromEndpoint:(NSURL *)endpoint
                     withParameters:(NSDictionary *)params
-                           success:(void (^)(NSArray *posts))success
+                           success:(void (^)(NSArray<RemoteReaderPost *> *posts, NSString *algorithm))success
                            failure:(void (^)(NSError *))failure
 {
     NSString *path = [endpoint absoluteString];
-    
-    [self.api GET:path
+    [self.wordPressComRestApi GET:path
            parameters:params
-              success:^(AFHTTPRequestOperation *operation, id responseObject) {
+              success:^(id responseObject, NSHTTPURLResponse *httpResponse) {
                   if (!success) {
                       return;
                   }
 
-                  NSArray *jsonPosts = [responseObject arrayForKey:@"posts"];
-                  NSArray *posts = [jsonPosts wp_map:^id(NSDictionary *jsonPost) {
-                      return [self formatPostDictionary:jsonPost];
-                  }];
-                  success(posts);
+                  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+                      // NOTE: Do all of this work on a background thread, then call success on the main thread.
+                      // Do this to avoid any chance of blocking the UI while parsing.
 
-              } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+                      // NOTE: If an offset param was specified sortRank will be derived
+                      // from the offset + order of the results, ONLY if a `before` param
+                      // was not specified.  If a `before` param exists we favor sorting by date.
+                      BOOL rankByOffset = [params objectForKey:ParamKeyOffset] != nil && [params objectForKey:ParamKeyBefore] == nil;
+                      __block CGFloat offset = [[params numberForKey:ParamKeyOffset] floatValue];
+                      NSString *algorithm = [responseObject stringForKey:ParamsKeyAlgorithm];
+                      NSArray *jsonPosts = [responseObject arrayForKey:PostRESTKeyPosts];
+                      NSArray *posts = [jsonPosts wp_map:^id(NSDictionary *jsonPost) {
+                          if (rankByOffset) {
+                              RemoteReaderPost *post = [self formatPostDictionary:jsonPost offset:offset];
+                              offset++;
+                              return post;
+                          }
+                          return [self formatPostDictionary:jsonPost];
+                      }];
+
+                      // Now call success on the main thread.
+                      dispatch_async(dispatch_get_main_queue(), ^{
+                          success(posts, algorithm);
+                      });
+                  });
+
+              } failure:^(NSError *error, NSHTTPURLResponse *httpResponse) {
                   if (failure) {
                       failure(error);
                   }
               }];
+}
+
+- (RemoteReaderPost *)formatPostDictionary:(NSDictionary *)dict offset:(CGFloat)offset
+{
+    RemoteReaderPost *post = [self formatPostDictionary:dict];
+    // It's assumed that sortRank values are in descending order. Since
+    // offsets are ascending, we store its negative to ensure we get a proper sort order.
+    CGFloat adjustedOffset = -offset;
+    post.sortRank = @(adjustedOffset);
+    return post;
 }
 
 /**
@@ -217,7 +302,7 @@ static const NSInteger MinutesToReadThreshold = 2;
     post.blogURL = [self siteURLFromPostDictionary:dict];
     post.commentCount = [discussionDict numberForKey:PostRESTKeyCommentCount];
     post.commentsOpen = [[discussionDict numberForKey:PostRESTKeyCommentsOpen] boolValue];
-    post.content = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyContent]];
+    post.content = [self postContentFromPostDictionary:dict];
     post.date_created_gmt = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyDate]];
     post.featuredImage = [self featuredImageFromPostDictionary:dict];
     post.feedID = [dict numberForKey:PostRESTKeyFeedID];
@@ -231,14 +316,21 @@ static const NSInteger MinutesToReadThreshold = 2;
     post.likeCount = [dict numberForKey:PostRESTKeyLikeCount];
     post.permalink = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyURL]];
     post.postID = [dict numberForKey:PostRESTKeyID];
-    post.postTitle = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyTitle]];
+    post.postTitle = [self postTitleFromPostDictionary:dict];
+    post.score = [dict numberForKey:PostRESTKeyScore];
     post.siteID = [dict numberForKey:PostRESTKeySiteID];
     post.sortDate = [self sortDateFromPostDictionary:dict];
+    post.sortRank = @(post.sortDate.timeIntervalSinceReferenceDate);
     post.status = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyStatus]];
-    post.summary = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyExcerpt]];
+    post.summary = [self postSummaryFromPostDictionary:dict orPostContent:post.content];
     post.tags = [self tagsFromPostDictionary:dict];
     post.isSharingEnabled = [[dict numberForKey:PostRESTKeySharingEnabled] boolValue];
     post.isLikesEnabled = [[dict numberForKey:PostRESTKeyLikesEnabled] boolValue];
+
+    // Construct a title if necessary.
+    if ([post.postTitle length] == 0 && [post.summary length] > 0) {
+        post.postTitle = [self titleFromSummary:post.summary];
+    }
 
     NSDictionary *tags = [self primaryAndSecondaryTagsFromPostDictionary:dict];
     if (tags) {
@@ -252,6 +344,13 @@ static const NSInteger MinutesToReadThreshold = 2;
     post.isJetpack = [[dict numberForKey:PostRESTKeyIsJetpack] boolValue];
     post.wordCount = [dict numberForKey:PostRESTKeyWordCount];
     post.readingTime = [self readingTimeForWordCount:post.wordCount];
+
+    NSDictionary *railcar = [dict dictionaryForKey:PostRESTKeyRailcar];
+    if (railcar) {
+        NSError *error;
+        NSData *railcarData = [NSJSONSerialization dataWithJSONObject:railcar options:NSJSONWritingPrettyPrinted error:&error];
+        post.railcar = [[NSString alloc] initWithData:railcarData encoding:NSUTF8StringEncoding];
+    }
 
     if ([dict arrayForKeyPath:@"discover_metadata.discover_fp_post_formats"]) {
         post.sourceAttribution = [self sourceAttributionFromDictionary:[dict dictionaryForKey:PostRESTKeyDiscoverMetadata]];
@@ -273,6 +372,9 @@ static const NSInteger MinutesToReadThreshold = 2;
 
     NSArray *metadata = [dict arrayForKey:PostRESTKeyMetadata];
     for (NSDictionary *obj in metadata) {
+        if (![obj isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
         if ([[obj stringForKey:CrossPostMetaKey] isEqualToString:CrossPostMetaXPostPermalink] ||
             [[obj stringForKey:CrossPostMetaKey] isEqualToString:CrossPostMetaXCommentPermalink]) {
 
@@ -320,6 +422,7 @@ static const NSInteger MinutesToReadThreshold = 2;
     if (remoteTags) {
         NSInteger highestCount = 0;
         NSInteger secondHighestCount = 0;
+        NSString *tagTitle;
         for (NSDictionary *tag in remoteTags) {
             NSInteger count = [[tag numberForKey:PostRESTKeyPostCount] integerValue];
             if (count > highestCount) {
@@ -327,12 +430,14 @@ static const NSInteger MinutesToReadThreshold = 2;
                 secondaryTagSlug = primaryTagSlug;
                 secondHighestCount = highestCount;
 
-                primaryTag = [tag stringForKey:PostRESTKeyName] ?: @"";
+                tagTitle = [tag stringForKey:POSTRESTKeyTagDisplayName] ?: [tag stringForKey:PostRESTKeyName];
+                primaryTag = tagTitle ?: @"";
                 primaryTagSlug = [tag stringForKey:PostRESTKeySlug] ?: @"";
                 highestCount = count;
 
             } else if (count > secondHighestCount) {
-                secondaryTag = [tag stringForKey:PostRESTKeyName] ?: @"";
+                tagTitle = [tag stringForKey:POSTRESTKeyTagDisplayName] ?: [tag stringForKey:PostRESTKeyName];
+                secondaryTag = tagTitle ?: @"";
                 secondaryTagSlug = [tag stringForKey:PostRESTKeySlug] ?: @"";
                 secondHighestCount = count;
 
@@ -457,7 +562,7 @@ static const NSInteger MinutesToReadThreshold = 2;
 
         // Find the last of the image press options after the image URL
         // Search from the start of the URL to the end of the string
-        NSRange ampRng = [img rangeOfString:@"&" options:nil range:NSMakeRange(location, [img length] - location)];
+        NSRange ampRng = [img rangeOfString:@"&" options:NSLiteralSearch range:NSMakeRange(location, [img length] - location)];
         // Default length is the remainder of the string following the start of the image URL.
         NSInteger length = [img length] - location;
         if (ampRng.location != NSNotFound) {
@@ -530,12 +635,18 @@ static const NSInteger MinutesToReadThreshold = 2;
  Get the date the post should be sorted by.
 
  @param dict A dictionary representing a post object from the REST API.
- @return The date string that should be used when sorting the post.
+ @return The NSDate that should be used when sorting the post.
  */
-- (NSString *)sortDateFromPostDictionary:(NSDictionary *)dict
+- (NSDate *)sortDateFromPostDictionary:(NSDictionary *)dict
 {
     // Sort date varies depending on the endpoint we're fetching from.
     NSString *sortDate = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyDate]];
+
+    // Date tagged on is returned by read/tags/%s/posts endpoints.
+    NSString *taggedDate = [dict stringForKey:PostRESTKeyTaggedOn];
+    if (taggedDate != nil) {
+        sortDate = taggedDate;
+    }
 
     // Date liked is returned by the read/liked end point.  Use this for sorting recent likes.
     NSString *likedDate = [dict stringForKey:PostRESTKeyDateLiked];
@@ -549,7 +660,7 @@ static const NSInteger MinutesToReadThreshold = 2;
         sortDate = editorialDate;
     }
 
-    return sortDate;
+    return [DateUtils dateFromISOString:sortDate];
 }
 
 /**
@@ -617,7 +728,7 @@ static const NSInteger MinutesToReadThreshold = 2;
         siteName = editorialSiteName;
     }
 
-    return siteName;
+    return [self makePlainText:siteName];
 }
 
 /**
@@ -628,7 +739,8 @@ static const NSInteger MinutesToReadThreshold = 2;
  */
 - (NSString *)siteDescriptionFromPostDictionary:(NSDictionary *)dict
 {
-    return [self stringOrEmptyString:[dict stringForKeyPath:@"meta.data.site.description"]];
+    NSString *description = [self stringOrEmptyString:[dict stringForKeyPath:@"meta.data.site.description"]];
+    return [self makePlainText:description];
 }
 
 /**
@@ -647,6 +759,46 @@ static const NSInteger MinutesToReadThreshold = 2;
     }
 
     return siteURL;
+}
+
+/**
+ Retrives the post content from results dictionary
+
+ @param dict A dictionary representing a post object from the REST API.
+ @return The formatted post content.
+ */
+- (NSString *)postContentFromPostDictionary:(NSDictionary *)dict {
+    NSString *content = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyContent]];
+    BOOL isPrivateSite = [self siteIsPrivateFromPostDictionary:dict];
+
+    return [self formatContent:content isPrivateSite:isPrivateSite];
+}
+
+/**
+ Get the title of the post
+
+ @param dict A dictionary representing a post object from the REST API.
+ @return The title of the post or an empty string.
+ */
+- (NSString *)postTitleFromPostDictionary:(NSDictionary *)dict {
+    NSString *title = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyTitle]];
+    return [self makePlainText:title];
+}
+
+/**
+ Get the summary for the post, or crafts one from the post content.
+
+ @param dict A dictionary representing a post object from the REST API.
+ @param content The formatted post content.
+ @return The summary for the post or an empty string.
+ */
+- (NSString *)postSummaryFromPostDictionary:(NSDictionary *)dict orPostContent:(NSString *)content {
+    NSString *summary = [self stringOrEmptyString:[dict stringForKey:PostRESTKeyExcerpt]];
+    summary = [self formatSummary:summary];
+    if (!summary) {
+        summary = [self createSummaryFromContent:content];
+    }
+    return summary;
 }
 
 /**
@@ -673,5 +825,285 @@ static const NSInteger MinutesToReadThreshold = 2;
         return [dict stringForKey:PostRESTKeySlug];
     }];
 }
+
+
+#pragma mark - Content Formatting and Sanitization
+
+/**
+ Formats the post content.
+ Removes transforms videopress markup into video tags, strips inline styles and tidys up paragraphs.
+
+ @param content The post content as a string.
+ @return The formatted content.
+ */
+- (NSString *)formatContent:(NSString *)content isPrivateSite:(BOOL)isPrivateSite
+{
+    if ([self containsVideoPress:content]) {
+        content = [self formatVideoPress:content];
+    }
+    content = [self normalizeParagraphs:content];
+    content = [self removeInlineStyles:content];
+    content = [content stringByReplacingHTMLEmoticonsWithEmoji];
+    content = [self resizeGalleryImageURLsForContent:content isPrivateSite:isPrivateSite];
+
+    return content;
+}
+
+/**
+ Formats a post's summary.  The excerpts provided by the REST API contain HTML and have some extra content appened to the end.
+ HTML is stripped and the extra bit is removed.
+
+ @param string The summary to format.
+ @return The formatted summary.
+ */
+- (NSString *)formatSummary:(NSString *)summary
+{
+    summary = [self makePlainText:summary];
+
+    NSString *continueReading = NSLocalizedString(@"Continue reading", @"Part of a prompt suggesting that there is more content for the user to read.");
+    continueReading = [NSString stringWithFormat:@"%@ →", continueReading];
+
+    NSRange rng = [summary rangeOfString:continueReading options:NSCaseInsensitiveSearch];
+    if (rng.location != NSNotFound) {
+        summary = [summary substringToIndex:rng.location];
+    }
+
+    return summary;
+}
+
+/**
+ Create a summary for the post based on the post's content.
+
+ @param string The post's content string. This should be the formatted content string.
+ @return A summary for the post.
+ */
+- (NSString *)createSummaryFromContent:(NSString *)string
+{
+    return [BasePost summaryFromContent:string];
+}
+
+/**
+ Transforms the specified string to plain text.  HTML markup is removed and HTML entities are decoded.
+
+ @param string The string to transform.
+ @return The transformed string.
+ */
+- (NSString *)makePlainText:(NSString *)string
+{
+    return [NSString makePlainText:string];
+}
+
+/**
+ Clean up paragraphs and in an HTML string. Removes duplicate paragraph tags and unnecessary DIVs.
+
+ @param string The string to normalize.
+ @return A string with normalized paragraphs.
+ */
+- (NSString *)normalizeParagraphs:(NSString *)string
+{
+    if (!string) {
+        return @"";
+    }
+
+    static NSRegularExpression *regexDivStart;
+    static NSRegularExpression *regexDivEnd;
+    static NSRegularExpression *regexPStart;
+    static NSRegularExpression *regexPEnd;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSError *error;
+        regexDivStart = [NSRegularExpression regularExpressionWithPattern:@"<div[^>]*>" options:NSRegularExpressionCaseInsensitive error:&error];
+        regexDivEnd = [NSRegularExpression regularExpressionWithPattern:@"</div>" options:NSRegularExpressionCaseInsensitive error:&error];
+        regexPStart = [NSRegularExpression regularExpressionWithPattern:@"<p[^>]*>\\s*<p[^>]*>" options:NSRegularExpressionCaseInsensitive error:&error];
+        regexPEnd = [NSRegularExpression regularExpressionWithPattern:@"</p>\\s*</p>" options:NSRegularExpressionCaseInsensitive error:&error];
+    });
+
+    // Convert div tags to p tags
+    string = [regexDivStart stringByReplacingMatchesInString:string options:NSMatchingReportCompletion range:NSMakeRange(0, [string length]) withTemplate:@"<p>"];
+    string = [regexDivEnd stringByReplacingMatchesInString:string options:NSMatchingReportCompletion range:NSMakeRange(0, [string length]) withTemplate:@"</p>"];
+
+    // Remove duplicate p tags.
+    string = [regexPStart stringByReplacingMatchesInString:string options:NSMatchingReportCompletion range:NSMakeRange(0, [string length]) withTemplate:@"<p>"];
+    string = [regexPEnd stringByReplacingMatchesInString:string options:NSMatchingReportCompletion range:NSMakeRange(0, [string length]) withTemplate:@"</p>"];
+
+    return string;
+}
+
+/**
+ Strip inline styles from the passed HTML sting.
+
+ @param string An HTML string to sanitize.
+ @return A string with inline styles removed.
+ */
+- (NSString *)removeInlineStyles:(NSString *)string
+{
+    if (!string) {
+        return @"";
+    }
+
+    static NSRegularExpression *regex;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        regex = [NSRegularExpression regularExpressionWithPattern:@"style=\"[^\"]*\"" options:NSRegularExpressionCaseInsensitive error:nil];
+    });
+
+    // Remove inline styles.
+    return [regex stringByReplacingMatchesInString:string options:NSMatchingReportCompletion range:NSMakeRange(0, [string length]) withTemplate:@""];
+}
+
+/**
+ Check the specified string for occurances of videopress videos.
+
+ @param string The string to search.
+ @return YES if a match was found, else returns NO.
+ */
+
+- (BOOL)containsVideoPress:(NSString *)string
+{
+    return [string rangeOfString:@"class=\"videopress-placeholder"].location != NSNotFound;
+}
+
+/**
+ Replace occurances of videopress markup with video tags int he passed HTML string.
+
+ @param string An HTML string.
+ @return The HTML string with videopress markup replaced with in image tag.
+ */
+- (NSString *)formatVideoPress:(NSString *)string
+{
+    NSMutableString *mstr = [string mutableCopy];
+
+    static NSRegularExpression *regexVideoPress;
+    static NSRegularExpression *regexMp4;
+    static NSRegularExpression *regexSrc;
+    static NSRegularExpression *regexPoster;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        regexVideoPress = [NSRegularExpression regularExpressionWithPattern:@"<div.*class=\"video-player[\\S\\s]+?<div.*class=\"videopress-placeholder[\\s\\S]*?</noscript>" options:NSRegularExpressionCaseInsensitive error:nil];
+        regexMp4 = [NSRegularExpression regularExpressionWithPattern:@"mp4[\\s\\S]+?mp4" options:NSRegularExpressionCaseInsensitive error:nil];
+        regexSrc = [NSRegularExpression regularExpressionWithPattern:@"http\\S+mp4" options:NSRegularExpressionCaseInsensitive error:nil];
+        regexPoster = [NSRegularExpression regularExpressionWithPattern:@"<img.*class=\"videopress-poster[\\s\\S]*?>" options:NSRegularExpressionCaseInsensitive error:nil];
+    });
+
+    // Find instances of VideoPress markup.
+
+    NSArray *matches = [regexVideoPress matchesInString:mstr options:0 range:NSMakeRange(0, [mstr length])];
+    for (NSTextCheckingResult *match in [matches reverseObjectEnumerator]) {
+        // compose videopress string
+
+        // Find the mp4 in the markup.
+        NSRange mp4Match = [regexMp4 rangeOfFirstMatchInString:mstr options:0 range:match.range];
+        if (mp4Match.location == NSNotFound) {
+            DDLogError(@"%@ failed to match mp4 JSON string while formatting video press markup: %@", NSStringFromSelector(_cmd), [mstr substringWithRange:match.range]);
+            [mstr replaceCharactersInRange:match.range withString:@""];
+            continue;
+        }
+        NSString *mp4 = [mstr substringWithRange:mp4Match];
+
+        // Get the mp4 url.
+        NSRange srcMatch = [regexSrc rangeOfFirstMatchInString:mp4 options:0 range:NSMakeRange(0, [mp4 length])];
+        if (srcMatch.location == NSNotFound) {
+            DDLogError(@"%@ failed to match mp4 src when formatting video press markup: %@", NSStringFromSelector(_cmd), mp4);
+            [mstr replaceCharactersInRange:match.range withString:@""];
+            continue;
+        }
+        NSString *src = [mp4 substringWithRange:srcMatch];
+        src = [src stringByReplacingOccurrencesOfString:@"\\/" withString:@"/"];
+
+        NSString *height = @"200"; // default
+        NSString *placeholder = @"";
+        NSRange posterMatch = [regexPoster rangeOfFirstMatchInString:string options:0 range:NSMakeRange(0, [string length])];
+        if (posterMatch.location != NSNotFound) {
+            NSString *poster = [string substringWithRange:posterMatch];
+            NSString *value = [self parseValueForAttributeNamed:@"height" inElement:poster];
+            if (value) {
+                height = value;
+            }
+
+            value = [self parseValueForAttributeNamed:@"src" inElement:poster];
+            if (value) {
+                placeholder = value;
+            }
+        }
+
+        // Compose a video tag to replace the default markup.
+        NSString *fmt = @"<video src=\"%@\" controls width=\"100%%\" height=\"%@\" poster=\"%@\"><source src=\"%@\" type=\"video/mp4\"></video>";
+        NSString *vid = [NSString stringWithFormat:fmt, src, height, placeholder, src];
+
+        [mstr replaceCharactersInRange:match.range withString:vid];
+    }
+
+    return mstr;
+}
+
+- (NSString *)resizeGalleryImageURLsForContent:(NSString *)content isPrivateSite:(BOOL)isPrivateSite
+{
+    if (!content) {
+        return @"";
+    }
+
+    NSMutableString *mcontent = [content mutableCopy];
+
+    static NSRegularExpression *regexGalleryImages;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        regexGalleryImages = [NSRegularExpression regularExpressionWithPattern:@"<img[^>]*data-orig-file[^>]*/>" options:NSRegularExpressionCaseInsensitive error:nil];
+    });
+
+    CGSize imageSize = [UIApplication sharedApplication].keyWindow.frame.size;
+    CGFloat scale = [[UIScreen mainScreen] scale];
+    CGSize scaledSize = CGSizeApplyAffineTransform(imageSize, CGAffineTransformMakeScale(scale, scale));
+
+    NSArray *matches = [regexGalleryImages matchesInString:mcontent options:0 range:NSMakeRange(0, [mcontent length])];
+    for (NSTextCheckingResult *match in [matches reverseObjectEnumerator]) {
+        NSMutableString *imageElementString = [[mcontent substringWithRange:match.range] mutableCopy];
+        NSString *srcImageURLString = [self parseValueForAttributeNamed:@"src" inElement:imageElementString];
+        NSString *originalImageURLString = [self parseValueForAttributeNamed:@"data-orig-file" inElement:imageElementString];
+        NSURL *originalURL = [NSURL URLWithString:originalImageURLString];
+        NSURL *modifiedURL;
+
+        if (isPrivateSite) {
+            modifiedURL = [WPImageURLHelper imageURLWithSize:scaledSize forImageURL:originalURL];
+        } else {
+            modifiedURL = [PhotonImageURLHelper photonURLWithSize:imageSize forImageURL:originalURL];
+        }
+
+        // First replace the src attribute of the <img /> element
+        [imageElementString replaceOccurrencesOfString:srcImageURLString
+                                            withString:modifiedURL.absoluteString
+                                               options:NSLiteralSearch
+                                                 range:NSMakeRange(0, imageElementString.length)];
+        // Now update the content blog with the modified <img /> element
+        [mcontent replaceCharactersInRange:match.range withString:imageElementString];
+    }
+
+    return mcontent;
+}
+
+- (NSString *)parseValueForAttributeNamed:(NSString *)attribute inElement:(NSString *)element
+{
+    NSString *value = @"";
+    NSString *attrStr = [NSString stringWithFormat:@"%@=\"", attribute];
+    NSRange attrRange = [element rangeOfString:attrStr];
+    if (attrRange.location != NSNotFound) {
+        NSInteger location = attrRange.location + attrRange.length;
+        NSInteger length = [element length] - location;
+        NSRange ending = [element rangeOfString:@"\"" options:NSCaseInsensitiveSearch range:NSMakeRange(location, length)];
+        value = [element substringWithRange:NSMakeRange(location, ending.location - location)];
+    }
+    return value;
+}
+
+/**
+ Creates a title for the post from the post's summary.
+
+ @param summary The already formatted post summary.
+ @return A title for the post that is a snippet of the summary.
+ */
+- (NSString *)titleFromSummary:(NSString *)summary
+{
+    return [summary stringByEllipsizingWithMaxLength:ReaderPostTitleLength preserveWords:YES];
+}
+
 
 @end

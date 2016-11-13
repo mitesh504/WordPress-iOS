@@ -3,16 +3,6 @@ import Foundation
 extension ReaderStreamViewController
 {
 
-    struct ActionSheetButtonTitles
-    {
-        static let cancel = NSLocalizedString("Cancel", comment:"The title of a cancel button.")
-        static let blockSite = NSLocalizedString("Block This Site", comment:"The title of a button that triggers blocking a site from the user's reader.")
-        static let share = NSLocalizedString("Share", comment:"Verb. Title of a button. Pressing the lets the user share a post to others.")
-        static let visit = NSLocalizedString("Visit Site", comment:"An option to visit the site to which a specific post belongs")
-        static let unfollow = NSLocalizedString("Unfollow Site", comment:"Verb. An option to unfollow a site.")
-        static let follow = NSLocalizedString("Follow Site", comment:"Verb. An option to follow a site.")
-    }
-
     // A simple struct defining a title and message for use with a WPNoResultsView
     public struct NoResultsResponse
     {
@@ -21,50 +11,53 @@ extension ReaderStreamViewController
     }
 
 
-    /**
-    Returns the ReaderStreamHeader appropriate for a particular ReaderTopic
-    or nil if there is not one.  The caller is expected to configure the
-    returned header.
-
-    @param topic A ReaderTopic
-    @param An unconfigured instance of a ReaderStreamHeader.
-    */
+    /// Returns the ReaderStreamHeader appropriate for a particular ReaderTopic or nil if there is not one.
+    /// The caller is expected to configure the returned header.
+    ///
+    /// - Parameter topic: A ReaderTopic
+    ///
+    /// - Returns: An unconfigured instance of a ReaderStreamHeader.
+    ///
     public class func headerForStream(topic: ReaderAbstractTopic) -> ReaderStreamHeader? {
-        if ReaderHelpers.topicIsFollowing(topic) || ReaderHelpers.topicIsFreshlyPressed(topic) || ReaderHelpers.topicIsLiked(topic) {
+        if ReaderHelpers.topicIsFreshlyPressed(topic) || ReaderHelpers.topicIsLiked(topic) {
             // no header for these special lists
             return nil
         }
 
+        if ReaderHelpers.topicIsFollowing(topic) {
+            return NSBundle.mainBundle().loadNibNamed("ReaderFollowedSitesStreamHeader", owner: nil, options: nil)!.first as! ReaderFollowedSitesStreamHeader
+        }
+
         // if tag
         if ReaderHelpers.isTopicTag(topic) {
-            return NSBundle.mainBundle().loadNibNamed("ReaderTagStreamHeader", owner: nil, options: nil).first as! ReaderTagStreamHeader
+            return NSBundle.mainBundle().loadNibNamed("ReaderTagStreamHeader", owner: nil, options: nil)!.first as! ReaderTagStreamHeader
         }
 
         // if list
         if ReaderHelpers.isTopicList(topic) {
-            return NSBundle.mainBundle().loadNibNamed("ReaderListStreamHeader", owner: nil, options: nil).first as! ReaderListStreamHeader
+            return NSBundle.mainBundle().loadNibNamed("ReaderListStreamHeader", owner: nil, options: nil)!.first as! ReaderListStreamHeader
         }
 
         // if site
         if ReaderHelpers.isTopicSite(topic) {
-            return NSBundle.mainBundle().loadNibNamed("ReaderSiteStreamHeader", owner: nil, options: nil).first as! ReaderSiteStreamHeader
+            return NSBundle.mainBundle().loadNibNamed("ReaderSiteStreamHeader", owner: nil, options: nil)!.first as! ReaderSiteStreamHeader
         }
 
         // if anything else return nil
         return nil
     }
 
-    /**
-    Returns a NoResultsResponse instance appropriate for the specified ReaderTopic
-    
-    @param topic A ReaderTopic.
-    @return An NoResultsResponse instance.
-    */
+    /// Returns a NoResultsResponse instance appropriate for the specified ReaderTopic
+    ///
+    /// - Parameter topic: A ReaderTopic.
+    ///
+    /// - Returns: An NoResultsResponse instance.
+    ///
     public class func responseForNoResults(topic: ReaderAbstractTopic) -> NoResultsResponse {
         // if following
         if ReaderHelpers.topicIsFollowing(topic) {
             return NoResultsResponse(
-                title: NSLocalizedString("Welcome to the reader", comment:"A message title"),
+                title: NSLocalizedString("Welcome to the Reader", comment:"A message title"),
                 message: NSLocalizedString("Recent posts from blogs and sites you follow will appear here.", comment:"A message explaining the Following topic in the reader")
             )
         }
@@ -98,6 +91,15 @@ extension ReaderStreamViewController
             return NoResultsResponse(
                 title: NSLocalizedString("No recent posts", comment:"A message title"),
                 message: NSLocalizedString("The sites in this list have not posted anything recently.", comment:"Message shown when the reader finds no posts for the chosen list")
+            )
+        }
+
+        // if search topic
+        if ReaderHelpers.isTopicSearchTopic(topic) {
+            let message = NSLocalizedString("No posts found matching %@ in your language.", comment:"Message shown when the reader finds no posts for the specified search phrase. The %@ is a placeholder for the search phrase.")
+            return NoResultsResponse(
+                title: NSLocalizedString("No posts found", comment:"A message title"),
+                message: NSString(format: message, topic.title) as String
             )
         }
 

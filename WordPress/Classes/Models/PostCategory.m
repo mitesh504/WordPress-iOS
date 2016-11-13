@@ -1,5 +1,7 @@
 #import "PostCategory.h"
 
+NSString * const PostCategoryEntityName = @"Category";
+NSString * const PostCategoryNameKey = @"categoryName";
 const NSInteger PostCategoryUncategorized = 1;
 
 @implementation PostCategory
@@ -9,5 +11,10 @@ const NSInteger PostCategoryUncategorized = 1;
 @dynamic parentID;
 @dynamic posts;
 @dynamic blog;
+
++ (NSString *)entityName
+{
+    return @"Category";
+}
 
 @end

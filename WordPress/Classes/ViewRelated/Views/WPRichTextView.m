@@ -162,6 +162,10 @@ NSString * const WPRichTextDefaultFontName = @"Merriweather";
     }
     _content = content;
 
+    // Assign an empty attributed string first. This "resets" the text layout
+    // and helps clear up some artifacting and drawing errors in certain edge cases.
+    self.attributedString = [[NSAttributedString alloc] initWithString:@""];
+
     NSData *data = [_content dataUsingEncoding:NSUTF8StringEncoding];
     self.attributedString = [[NSAttributedString alloc] initWithHTMLData:data
                                                                  options:self.textOptions
@@ -271,7 +275,7 @@ NSString * const WPRichTextDefaultFontName = @"Merriweather";
     // this point has no effect.  Dispatch async will let us refresh layout in a new loop
     // and correctly update.
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self refreshMediaLayout];
+        [self refreshLayout];
 
         if ([self.delegate respondsToSelector:@selector(richTextViewDidLoadMediaBatch:)]) {
             [self.delegate richTextViewDidLoadMediaBatch:self]; // So the delegate can correct its size.
@@ -487,6 +491,11 @@ NSString * const WPRichTextDefaultFontName = @"Merriweather";
         return;
     }
     self.needsCheckPendingDownloadsAfterDelay = NO;
+
+    // Bail if there is no media needing layout.
+    if ([self.mediaIndexPathsNeedingLayout count] == 0) {
+        return;
+    }
 
     [self refreshLayoutForMediaAtIndexPaths:self.mediaIndexPathsNeedingLayout];
     [self.mediaIndexPathsNeedingLayout removeAllObjects];

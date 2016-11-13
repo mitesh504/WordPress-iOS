@@ -3,10 +3,24 @@
 
 @implementation NavBarTitleDropdownButton
 
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self) {
+        [self setupStyle];
+    }
+
+    return self;
+}
+
 - (void)awakeFromNib
 {
     [super awakeFromNib];
+    [self setupStyle];
+}
 
+- (void)setupStyle
+{
     self.titleLabel.textColor = [UIColor whiteColor];
     self.titleLabel.adjustsFontSizeToFitWidth = NO;
     self.titleLabel.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -31,7 +45,7 @@
 - (void)setAttributedTitleForTitle:(NSString *)title
 {
     NSDictionary *attributes = @{NSForegroundColorAttributeName : [UIColor whiteColor],
-                                 NSFontAttributeName : [WPFontManager openSansBoldFontOfSize:16.0] };
+                                 NSFontAttributeName : [WPFontManager systemBoldFontOfSize:16.0] };
     NSMutableAttributedString *titleText = [[NSMutableAttributedString alloc] initWithString:title
                                                                                   attributes:attributes];
 

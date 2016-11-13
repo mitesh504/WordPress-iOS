@@ -12,6 +12,8 @@ class ReaderStreamViewControllerTests: XCTestCase {
 
         let controller = ReaderStreamViewController.controllerWithTopic(topic)
         XCTAssertNotNil(controller, "Controller should not be nil")
+
+        ContextManager.overrideSharedInstance(nil)
     }
 
     func testControllerWithSiteID() {
@@ -20,5 +22,3 @@ class ReaderStreamViewControllerTests: XCTestCase {
     }
 
 }
-
-

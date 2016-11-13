@@ -2,12 +2,15 @@
 #import "AbstractPost.h"
 #import "ContextManager.h"
 #import "PostService.h"
-#import "Page.h"
 #import "Blog.h"
 #import "PageSettingsViewController.h"
-#import "WPTooltip.h"
+#import "WordPress-Swift.h"
 
 @implementation EditPageViewController
+
++ (Class)supportedPostClass {
+    return [Page class];
+}
 
 - (void)viewDidLoad
 {
@@ -48,22 +51,11 @@
 }
 
 - (AbstractPost *)createNewDraftForBlog:(Blog *)blog {
-    return [PostService createDraftPageInMainContextForBlog:blog];
-}
+    NSManagedObjectContext *context = [[ContextManager sharedInstance] mainContext];
+    PostService *postService = [[PostService alloc] initWithManagedObjectContext:context];
+    AbstractPost *page = [postService createDraftPageForBlog:blog];
 
-#pragma mark - Onboarding
-
-- (void)showOnboardingTips
-{
-    CGFloat xValue = CGRectGetMaxX(self.view.frame) - NavigationBarButtonRect.size.width;
-    if (IS_IPAD) {
-        xValue -= 20.0;
-    } else {
-        xValue -= 10.0;
-    }
-    CGRect targetFrame = CGRectMake(xValue, 0.0, NavigationBarButtonRect.size.width, 0.0);
-    NSString *tooltipText = NSLocalizedString(@"Tap to edit page", @"Tooltip for the button that allows the user to edit the current page.");
-    [WPTooltip displayTooltipInView:self.view fromFrame:targetFrame withText:tooltipText direction:WPTooltipDirectionDown];
+    return page;
 }
 
 @end

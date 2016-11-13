@@ -34,6 +34,9 @@ CGFloat const WPWalkthroughGrayOverlayMaxLabelWidth = 289.0;
     self = [super initWithFrame:frame];
     if (self) {
         _overlayMode = WPWalkthroughGrayOverlayViewOverlayModePrimaryButton;
+
+        self.accessibilityViewIsModal = YES;
+
         [self configureBackgroundColor];
         [self addViewElements];
         [self addGestureRecognizer];
@@ -174,6 +177,15 @@ CGFloat const WPWalkthroughGrayOverlayMaxLabelWidth = 289.0;
     [WPNUXUtility centerViews:viewsToCenter withStartingView:_logo andEndingView:_description forHeight:(_viewHeight-heightFromBottomLabel)];
 }
 
+- (void)didMoveToSuperview
+{
+    [super didMoveToSuperview];
+
+    if (UIAccessibilityIsVoiceOverRunning()) {
+        UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification, _title);
+    }
+}
+
 - (void)dismiss
 {
     [self removeFromSuperview];
@@ -211,7 +223,7 @@ CGFloat const WPWalkthroughGrayOverlayMaxLabelWidth = 289.0;
     _title.textAlignment = NSTextAlignmentCenter;
     _title.numberOfLines = 0;
     _title.lineBreakMode = NSLineBreakByWordWrapping;
-    _title.font = [WPFontManager openSansLightFontOfSize:25.0];
+    _title.font = [WPFontManager systemLightFontOfSize:25.0];
     _title.text = self.overlayTitle;
     _title.shadowColor = [UIColor blackColor];
     _title.shadowOffset = CGSizeMake(1.0, 1.0);
@@ -235,7 +247,7 @@ CGFloat const WPWalkthroughGrayOverlayMaxLabelWidth = 289.0;
     _bottomLabel.backgroundColor = [UIColor clearColor];
     _bottomLabel.textAlignment = NSTextAlignmentCenter;
     _bottomLabel.numberOfLines = 1;
-    _bottomLabel.font = [WPFontManager openSansRegularFontOfSize:10.0];
+    _bottomLabel.font = [WPFontManager systemRegularFontOfSize:10.0];
     _bottomLabel.text = self.footerDescription;
     _bottomLabel.textColor = [UIColor colorWithRed:1.0 green:1.0 blue:1.0 alpha:0.4];
     [self addSubview:_bottomLabel];

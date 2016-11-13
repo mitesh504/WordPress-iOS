@@ -1,12 +1,15 @@
 
 #import "AppRatingUtility.h"
 
+#import "Constants.h"
+
 @interface AppRatingUtility ()
 
 @property (nonatomic, assign) NSUInteger systemWideSignificantEventCountRequiredForPrompt;
 @property (nonatomic, strong) NSMutableDictionary *sections;
 @property (nonatomic, strong) NSMutableDictionary *disabledSections;
 @property (nonatomic, assign) BOOL allPromptingDisabled;
+@property (nonatomic, copy) NSString *appReviewUrl;
 
 @end
 
@@ -25,6 +28,7 @@ NSString *const AppRatingDislikedCurrentVersion = @"AppRatingDislikedCurrentVers
 NSString *const AppRatingLikedCurrentVersion = @"AppRatingLikedCurrentVersion";
 NSString *const AppRatingUserLikeCount = @"AppRatingUserLikeCount";
 NSString *const AppRatingUserDislikeCount = @"AppRatingUserDislikeCount";
+NSString *const AppRatingDefaultAppReviewUrl = @"http://itunes.apple.com/WebObjects/MZStore.woa/wa/viewContentsUserReviews?id=335703880&pageNumber=0&sortOrdering=2&type=Purple+Software&mt=8";
 
 NSString *const AppReviewPromptDisabledUrl = @"https://api.wordpress.org/iphoneapp/app-review-prompt-check/1.0/";
 
@@ -61,10 +65,25 @@ NSString *const AppReviewPromptDisabledUrl = @"https://api.wordpress.org/iphonea
 {
     NSURL *url = [NSURL URLWithString:AppReviewPromptDisabledUrl];
     NSURLRequest *request = [[NSURLRequest alloc] initWithURL:url];
-    AFHTTPRequestOperation* operation = [[AFHTTPRequestOperation alloc] initWithRequest:request];
-    operation.responseSerializer = [[AFJSONResponseSerializer alloc] init];
-    [operation setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject)
-    {
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:[NSURLSessionConfiguration ephemeralSessionConfiguration]];
+    NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (error || data == nil) {
+            // Let's be optimistic and turn off throttling by default if this call doesn't work
+            [self resetReviewPromptDisabledStatus];
+            if (failure) {
+                failure();
+            }
+            return;
+        }
+        id responseObject = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if (responseObject == nil || ![responseObject isKindOfClass:[NSDictionary class]]) {
+            // Let's be optimistic and turn off throttling by default if this call doesn't work
+            [self resetReviewPromptDisabledStatus];
+            if (failure) {
+                failure();
+            }
+            return;
+        }
         NSDictionary *responseDictionary = (NSDictionary *)responseObject;
         AppRatingUtility *appRatingUtility = [AppRatingUtility sharedInstance];
         appRatingUtility.allPromptingDisabled = [responseDictionary[@"all-disabled"] boolValue];
@@ -75,19 +94,18 @@ NSString *const AppReviewPromptDisabledUrl = @"https://api.wordpress.org/iphonea
             appRatingUtility.disabledSections[key] = @(disableSection);
         }];
         
+        NSString *appReviewUrl = [responseDictionary stringForKey:@"app-review-url"];
+        if (appReviewUrl.length > 0) {
+            AppRatingUtility *sharedInstance = [self sharedInstance];
+            sharedInstance.appReviewUrl = appReviewUrl;
+        }
+        
         if (success) {
             success();
         }
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
-        // Let's be optimistic and turn off throttling by default if this call doesn't work
-        [self resetReviewPromptDisabledStatus];
-        
-        if (failure) {
-            failure();
-        }
     }];
 
-    [operation start];
+    [task resume];
 }
 
 
@@ -317,6 +335,16 @@ NSString *const AppReviewPromptDisabledUrl = @"https://api.wordpress.org/iphonea
 + (void)assertValidSection:(NSString *)section
 {
     NSAssert([[AppRatingUtility sharedInstance].sections.allKeys containsObject:section], @"Invalid section");
+}
+
++ (NSString *)appReviewUrl
+{
+    AppRatingUtility *sharedInstance = [AppRatingUtility sharedInstance];
+    if (sharedInstance.appReviewUrl.length == 0) {
+        return AppRatingDefaultAppReviewUrl;
+    } else {
+        return sharedInstance.appReviewUrl;
+    }
 }
 
 @end

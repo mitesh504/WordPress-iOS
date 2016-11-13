@@ -1,21 +1,33 @@
 #import "SettingsTextViewController.h"
 #import "WPTextFieldTableViewCell.h"
 #import "WPStyleGuide.h"
-#import "WPTableViewSectionHeaderFooterView.h"
+#import "WordPress-Swift.h"
 
-static CGFloat const HorizontalMargin = 15.0f;
+
+
+#pragma mark - Constants
+
+static CGFloat const SettingsTextHorizontalMargin = 15.0f;
+
+typedef NS_ENUM(NSInteger, SettingsTextSections) {
+    SettingsTextSectionsTextfield = 0,
+    SettingsTextSectionsAction,
+    SettingsTextSectionsCount
+};
+
+#pragma mark - Private Properties
 
 @interface SettingsTextViewController() <UITextFieldDelegate>
-
-@property (nonatomic, strong) WPTableViewCell *textFieldCell;
-@property (nonatomic, strong) UITextField *textField;
-@property (nonatomic, strong) UIView *hintView;
-@property (nonatomic, strong) NSString *hint;
-@property (nonatomic, assign) BOOL isPassword;
-@property (nonatomic, strong) NSString *placeholder;
-@property (nonatomic, strong) NSString *text;
-
+@property (nonatomic, strong) NoticeAnimator    *noticeAnimator;
+@property (nonatomic, strong) WPTableViewCell   *textFieldCell;
+@property (nonatomic, strong) WPTableViewCell   *actionCell;
+@property (nonatomic, strong) UITextField       *textField;
+@property (nonatomic, assign) BOOL              doneButtonEnabled;
+@property (nonatomic, assign) BOOL              shouldNotifyValue;
 @end
+
+
+#pragma mark - SettingsTextViewController
 
 @implementation SettingsTextViewController
 
@@ -24,37 +36,137 @@ static CGFloat const HorizontalMargin = 15.0f;
     _textField.delegate = nil;
 }
 
-- (instancetype)initWithText:(NSString *)text
-                 placeholder:(NSString *)placeholder
-                        hint:(NSString *)hint
-                  isPassword:(BOOL)isPassword
+- (instancetype)initWithStyle:(UITableViewStyle)style
+{
+    return [self initWithText:@"" placeholder:@"" hint:@""];
+}
+
+- (instancetype)initWithText:(NSString *)text placeholder:(NSString *)placeholder hint:(NSString *)hint
 {
     self = [super initWithStyle:UITableViewStyleGrouped];
     if (self) {
         _text = text;
         _placeholder = placeholder;
         _hint = hint;
-        _isPassword = isPassword;
+
+        [self configureInstance];
     }
     return self;
 }
 
-- (instancetype)initWithStyle:(UITableViewStyle)style
+- (instancetype)initWithCoder:(NSCoder *)aDecoder
 {
-    return [self initWithText:@"" placeholder:@"" hint:@"" isPassword:NO];
+    self = [super initWithCoder:aDecoder];
+    if (self) {
+        [self configureInstance];
+    }
+
+    return self;
 }
 
-- (void)viewDidAppear:(BOOL)animated
+- (void)configureInstance
 {
-    [self.textField becomeFirstResponder];
-    [super viewDidAppear:animated];
+    _autocorrectionType = UITextAutocorrectionTypeDefault;
+    _shouldNotifyValue = YES;
+    _validatesInput = YES;
 }
+
+
+
+#pragma mark - View Lifecycle
 
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    [WPStyleGuide resetReadableMarginsForTableView:self.tableView];
+
+    self.shouldNotifyValue = YES;
+
+    [self startListeningTextfieldChanges];
     [WPStyleGuide configureColorsForView:self.view andTableView:self.tableView];
+}
+
+- (void)viewWillAppear:(BOOL)animated
+{
+    [super viewWillAppear:animated];
+    [self setupNoticeAnimatorIfNeeded];
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+    [self.textField becomeFirstResponder];
+}
+
+- (void)viewWillDisappear:(BOOL)animated
+{
+    [super viewWillDisappear:animated];
+    [self.view endEditing:YES];
+    
+    if (self.shouldNotifyValue) {
+        [self notifyValueDidChangeIfNeeded];
+    }
+}
+
+- (void)viewDidLayoutSubviews
+{
+    [super viewDidLayoutSubviews];
+    [self.noticeAnimator layout];
+}
+
+
+#pragma mark - NavigationItem Buttons
+
+- (void)cancel
+{
+    self.shouldNotifyValue = NO;
+    [self dismissViewController];
+}
+
+- (void)confirm
+{
+    [self dismissViewController];
+}
+
+- (void)setupNoticeAnimatorIfNeeded
+{
+    if (self.notice == nil) {
+        return;
+    }
+    
+    self.noticeAnimator = [[NoticeAnimator alloc] initWithTarget:self.view];
+    [self.noticeAnimator animateMessage:self.notice];
+}
+
+
+#pragma mark - Validation
+
+- (void)startListeningTextfieldChanges
+{
+    // Hook up to Change Events
+    [_textField addTarget:self action:@selector(validateTextInput:) forControlEvents:UIControlEventEditingChanged];
+    
+    // Fire initial status
+    [self validateTextInput:_textField];
+}
+
+- (BOOL)textPassesValidation
+{
+    BOOL isEmail = (self.mode == SettingsTextModesEmail);
+    return (self.validatesInput == false || isEmail == false || (isEmail && self.textField.text.isValidEmail));
+}
+
+- (void)validateTextInput:(id)sender
+{
+    self.doneButtonEnabled = [self textPassesValidation];
+}
+
+
+#pragma mark - Properties
+
+- (void)setMode:(SettingsTextModes)mode
+{
+    _mode = mode;
+    [self updateModeSettings:mode];
 }
 
 - (WPTableViewCell *)textFieldCell
@@ -63,47 +175,62 @@ static CGFloat const HorizontalMargin = 15.0f;
         return _textFieldCell;
     }
     _textFieldCell = [[WPTableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
-    
-    self.textField = [[UITextField alloc] initWithFrame:CGRectInset(_textFieldCell.bounds, HorizontalMargin, 0)];
-    self.textField.clearButtonMode = UITextFieldViewModeAlways;
-    self.textField.font = [WPStyleGuide tableviewTextFont];
-    self.textField.textColor = [WPStyleGuide darkGrey];
-    self.textField.text = self.text;
-    self.textField.placeholder = self.placeholder;
-    self.textField.returnKeyType = UIReturnKeyDone;
-    self.textField.keyboardType = UIKeyboardTypeDefault;
-    self.textField.secureTextEntry = self.isPassword;
-    self.textField.autoresizingMask = UIViewAutoresizingFlexibleWidth;
-    self.textField.delegate = self;
-    
+    _textFieldCell.selectionStyle = UITableViewCellSelectionStyleNone;
     [_textFieldCell.contentView addSubview:self.textField];
-    
+
+    self.textField.translatesAutoresizingMaskIntoConstraints = NO;
+    UILayoutGuide *readableGuide = _textFieldCell.contentView.readableContentGuide;
+    [NSLayoutConstraint activateConstraints:@[
+                                               [self.textField.leadingAnchor constraintEqualToAnchor:readableGuide.leadingAnchor],
+                                               [self.textField.topAnchor constraintEqualToAnchor:_textFieldCell.contentView.topAnchor],
+                                               [self.textField.trailingAnchor constraintEqualToAnchor:readableGuide.trailingAnchor],
+                                               [self.textField.bottomAnchor constraintEqualToAnchor:_textFieldCell.contentView.bottomAnchor],
+                                               ]];
+
     return _textFieldCell;
 }
 
-- (UIView *)hintView
+- (WPTableViewCell *)actionCell
 {
-    if (_hintView) {
-        return _hintView;
+    if (_actionCell) {
+        return _actionCell;
     }
-    WPTableViewSectionHeaderFooterView *footerView = [[WPTableViewSectionHeaderFooterView alloc] initWithReuseIdentifier:nil style:WPTableViewSectionStyleFooter];
-    [footerView setTitle:_hint];
-    _hintView = footerView;
-    return _hintView;
+    _actionCell = [[WPTableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
+    _actionCell.frame = CGRectInset(_actionCell.bounds, SettingsTextHorizontalMargin, 0);
+    _actionCell.textLabel.text = self.actionText;
+    _actionCell.textLabel.textAlignment = NSTextAlignmentCenter;
+    
+    [WPStyleGuide configureTableViewActionCell:_actionCell];
+    
+    return _actionCell;
 }
 
-- (void)viewWillDisappear:(BOOL)animated
+- (UITextField *)textField
 {
-    if (self.onValueChanged && ![self.textField.text isEqualToString:self.text]) {
-        self.onValueChanged(self.textField.text);
+    if (_textField) {
+        return _textField;
     }
-        
-    [super viewWillDisappear:animated];
+    
+    _textField = [[UITextField alloc] initWithFrame:CGRectZero];
+    _textField.clearButtonMode = UITextFieldViewModeAlways;
+    _textField.font = [WPStyleGuide tableviewTextFont];
+    _textField.textColor = [WPStyleGuide darkGrey];
+    _textField.text = self.text;
+    _textField.placeholder = self.placeholder;
+    _textField.returnKeyType = UIReturnKeyDone;
+    _textField.keyboardType = UIKeyboardTypeDefault;
+    _textField.delegate = self;
+    _textField.autocorrectionType = self.autocorrectionType;
+    
+    return _textField;
 }
+
+
+#pragma mark - UITableViewDelegate
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView
 {
-    return 1;
+    return _displaysActionButton ? SettingsTextSectionsCount : SettingsTextSectionsCount - 1;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
@@ -113,29 +240,89 @@ static CGFloat const HorizontalMargin = 15.0f;
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath
 {
-    if (indexPath.section == 0 && indexPath.row == 0)
-    {
+    if (indexPath.section == SettingsTextSectionsTextfield) {
         return self.textFieldCell;
     }
-    return nil;
+    
+    return self.actionCell;
 }
 
-- (UIView *)tableView:(UITableView *)tableView viewForFooterInSection:(NSInteger)section
+- (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section
 {
-    return self.hintView;
+    if (section != SettingsTextSectionsTextfield) {
+        return nil;
+    }
+    return self.hint;
+}
+
+- (void)tableView:(UITableView *)tableView willDisplayFooterView:(UIView *)view forSection:(NSInteger)section
+{
+    [WPStyleGuide configureTableViewSectionFooter:view];
+}
+
+- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath
+{
+    [tableView deselectSelectedRowWithAnimation:YES];
+    
+    if (indexPath.section == SettingsTextSectionsAction && self.onActionPress != nil) {
+        self.onActionPress();
+        [self dismissViewController];
+    }
+}
+
+
+#pragma mark - Helpers
+
+- (void)dismissViewController
+{
+    if (self.isModal && self.navigationController.viewControllers.count == 1) {
+        [self dismissViewControllerAnimated:YES completion:nil];
+    } else {
+        [self.navigationController popViewControllerAnimated:YES];
+    }
+}
+
+- (void)notifyValueDidChangeIfNeeded
+{
+    if (self.onValueChanged == nil || [self.textField.text isEqualToString:self.text]) {
+        return;
+    }
+    
+    self.onValueChanged(self.textField.text);
+}
+
+
+- (void)updateModeSettings:(SettingsTextModes)newMode
+{
+    BOOL requiresSecureTextEntry = NO;
+    UIKeyboardType keyboardType = UIKeyboardTypeDefault;
+    UITextAutocapitalizationType autocapitalizationType = UITextAutocapitalizationTypeSentences;
+
+    if (newMode == SettingsTextModesLowerCaseText) {
+        autocapitalizationType = UITextAutocapitalizationTypeNone;
+    } else if (newMode == SettingsTextModesPassword) {
+        requiresSecureTextEntry = YES;
+    } else if (newMode == SettingsTextModesEmail) {
+        keyboardType = UIKeyboardTypeEmailAddress;
+        autocapitalizationType = UITextAutocapitalizationTypeNone;
+    }
+    
+    self.textField.autocapitalizationType = autocapitalizationType;
+    self.textField.keyboardType = keyboardType;
+    self.textField.secureTextEntry = requiresSecureTextEntry;
 }
 
 
 #pragma mark - UITextFieldDelegate Methods
 
-- (BOOL)textField:(UITextField *)textField shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString *)string
+- (BOOL)textFieldShouldReturn:(UITextField *)textField
 {
-    NSRange newLineRange = [string rangeOfCharacterFromSet:[NSCharacterSet newlineCharacterSet]];    
-    if (newLineRange.location != NSNotFound) {
-        [self.navigationController popViewControllerAnimated:YES];
+    BOOL isValid = self.textPassesValidation;
+    if (isValid) {
+        [self confirm];
     }
-
-    return YES;
+    
+    return isValid;
 }
 
 @end

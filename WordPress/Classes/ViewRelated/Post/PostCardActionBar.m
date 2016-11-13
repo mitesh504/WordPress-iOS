@@ -6,10 +6,10 @@
 #import "WordPress-Swift.h"
 
 static NSInteger ActionBarMoreButtonIndex = 999;
-static CGFloat ActionBarMinButtonWidth = 100.0;
+static NSInteger const ActionBarMaxNumButtonsHorizontallyCompact = 3;
+static NSInteger const ActionBarMaxNumButtonsHorizontallyRegular = 4;
 
-static const UIEdgeInsets BackButtonImageInsets = {1.0, 0.0, 0.0, 0.0};
-static const UIEdgeInsets MoreButtonImageInsets = {3.0, 0.0, 0.0, 4.0};
+static const UIEdgeInsets MoreButtonImageInsets = {0.0, 0.0, 0.0, 4.0};
 
 @interface PostCardActionBar()
 @property (nonatomic, strong) UIView *contentView;
@@ -23,11 +23,6 @@ static const UIEdgeInsets MoreButtonImageInsets = {3.0, 0.0, 0.0, 4.0};
 @implementation PostCardActionBar
 
 #pragma mark - Life Cycle Methods
-
-- (void)dealloc
-{
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
-}
 
 - (void)awakeFromNib
 {
@@ -45,12 +40,14 @@ static const UIEdgeInsets MoreButtonImageInsets = {3.0, 0.0, 0.0, 4.0};
     return self;
 }
 
-- (void)layoutSubviews
+#pragma mark - Layout
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previousTraitCollection
 {
-    [super layoutSubviews];
+    [super traitCollectionDidChange:previousTraitCollection];
+
     [self setupButtonsIfNeeded];
 }
-
 
 #pragma mark - Setup
 
@@ -75,15 +72,12 @@ static const UIEdgeInsets MoreButtonImageInsets = {3.0, 0.0, 0.0, 4.0};
                                                                  metrics:nil
                                                                    views:views]];
 
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(orientationDidChange:)
-                                                 name:UIDeviceOrientationDidChangeNotification
-                                               object:nil];
-
     // Trap double taps to prevent touches from regstering in the parent cell while the bar is animating.
     UITapGestureRecognizer *tgr = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleDoubleTap:)];
     tgr.numberOfTapsRequired = 2;
     [self addGestureRecognizer:tgr];
+
+    [self setupButtonsIfNeeded];
 }
 
 - (void)setupConstraints
@@ -266,14 +260,16 @@ static const UIEdgeInsets MoreButtonImageInsets = {3.0, 0.0, 0.0, 4.0};
     }];
 }
 
+#pragma mark - Instance Methods
 
-#pragma mark - Notifications
-
-- (void)orientationDidChange:(NSNotification *)notification
+- (void)reset
 {
-    [self setupButtonsIfNeeded];
+    if (self.currentBatch == 0) {
+        return;
+    }
+    self.currentBatch = 0;
+    [self configureButtons];
 }
-
 
 #pragma mark - Accessors
 
@@ -284,7 +280,17 @@ static const UIEdgeInsets MoreButtonImageInsets = {3.0, 0.0, 0.0, 4.0};
 
 - (NSInteger)maxButtonsToDisplay
 {
-    return (NSInteger)floor(CGRectGetWidth(self.frame) / ActionBarMinButtonWidth);
+    NSInteger count;
+    if (self.traitCollection.horizontalSizeClass == UIUserInterfaceSizeClassRegular) {
+        count = ActionBarMaxNumButtonsHorizontallyRegular;
+    } else if ( [WPDeviceIdentification isiPhone] && UIInterfaceOrientationIsLandscape([[UIApplication sharedApplication] statusBarOrientation])) {
+        // On iPhone, if we're not horizontally regular, but in landscape orientation, go ahead
+        // and allow the max button count for horizontally regular since we have the screen space.
+        count = ActionBarMaxNumButtonsHorizontallyRegular;
+    } else {
+        count = ActionBarMaxNumButtonsHorizontallyCompact;
+    }
+    return count;
 }
 
 - (BOOL)checkIfShouldShowMoreButton
@@ -307,7 +313,6 @@ static const UIEdgeInsets MoreButtonImageInsets = {3.0, 0.0, 0.0, 4.0};
         item = [PostCardActionBarItem itemWithTitle:NSLocalizedString(@"Back", @"")
                                               image:[UIImage imageNamed:@"icon-post-actionbar-back"]
                                    highlightedImage:nil];
-        item.imageInsets = BackButtonImageInsets;
     } else {
         item = [PostCardActionBarItem itemWithTitle:NSLocalizedString(@"More", @"")
                                               image:[UIImage imageNamed:@"icon-post-actionbar-more"]

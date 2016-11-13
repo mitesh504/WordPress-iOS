@@ -22,13 +22,13 @@ class FeatureFlagTest: XCTestCase {
         }
     }
 
+    // Add tests for features that should be disabled in production here.
     func testEnsureDisabledFeaturesInProduction() {
         Build.withCurrent(.AppStore) {
-            expect(FeatureFlag.People.enabled).to(beFalse())
-            expect(FeatureFlag.MyProfile.enabled).to(beFalse())
+//            Example:
+//            expect(FeatureFlag.[FeatureEnum].enabled).to(beFalse())
         }
     }
-
 }
 
 extension Build {
